@@ -1,0 +1,49 @@
+<section class="section">
+  <div class="section-header">
+    <div>
+      <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+      <h2>{{ section.settings.heading }}</h2>
+      <p class="lede">{{ section.settings.subheading }}</p>
+    </div>
+    <a href="/collections/all" class="link">View all</a>
+  </div>
+  <div class="product-grid">
+    {% for product in collections[section.settings.collection].products limit: section.settings.limit %}
+      <article class="product-card" data-product-id="{{ product.id }}">
+        <div class="badge">Best Seller</div>
+        <a href="{{ product.url }}" class="product-image">
+          {{ product.featured_image | image_url: width: 480 | image_tag: product.title }}
+        </a>
+        <div class="product-info">
+          <h3><a href="{{ product.url }}">{{ product.title }}</a></h3>
+          <p class="price">{{ product.price | money }}</p>
+          <p class="rating">★★★★★ {{ section.settings.review_label }}</p>
+          <div class="product-actions">
+            <form method="post" action="/cart/add">
+              <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+              <button type="submit" class="button primary">Add to cart</button>
+            </form>
+            <button type="button" class="button ghost" data-wishlist>Add to wishlist</button>
+          </div>
+        </div>
+      </article>
+    {% else %}
+      <div class="placeholder">Add products to the selected collection to populate this grid.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Best sellers",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Bestsellers"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "Top picks customers love"},
+    {"type": "textarea", "id": "subheading", "label": "Subheading", "default": "Curated for performance, safety, and time-saving prep."},
+    {"type": "collection", "id": "collection", "label": "Collection"},
+    {"type": "range", "id": "limit", "min": 2, "max": 12, "step": 1, "default": 4, "label": "Products shown"},
+    {"type": "text", "id": "review_label", "label": "Review label", "default": "(1k+ reviews)"}
+  ],
+  "presets": [{"name": "Best sellers", "category": "Products"}]
+}
+{% endschema %}

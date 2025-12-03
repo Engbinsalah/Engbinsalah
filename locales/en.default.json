@@ -1,0 +1,6 @@
+{
+  "general": {
+    "404": {"title": "Page not found", "link": "Back to home"},
+    "newsletter_label": "Subscribe for updates"
+  }
+}

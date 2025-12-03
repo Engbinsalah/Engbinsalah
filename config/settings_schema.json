@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Theme settings",
+    "settings": [
+      {"type": "text", "id": "footer_heading", "label": "Footer heading", "default": "Amrend Life"},
+      {"type": "textarea", "id": "footer_subheading", "label": "Footer subheading", "default": "Smart tools for modern homes."},
+      {"type": "text", "id": "social_facebook", "label": "Facebook URL"},
+      {"type": "text", "id": "social_instagram", "label": "Instagram URL"},
+      {"type": "text", "id": "social_youtube", "label": "YouTube URL"}
+    ]
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "current": "Default",
+  "presets": {
+    "Default": {
+      "theme_settings": {
+        "footer_heading": "Amrend Life",
+        "footer_subheading": "Smart tools for modern homes.",
+        "social_facebook": "https://facebook.com",
+        "social_instagram": "https://instagram.com",
+        "social_youtube": "https://youtube.com"
+      }
+    }
+  }
+}
