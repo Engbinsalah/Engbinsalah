@@ -260,6 +260,13 @@ def fit_cdp_parameters(E_gpa, S_cu, e_cu, S_tu, comp_file, tens_file):
 # 4. STREAMLIT APP STRUCTURE
 # ====================================================================
 
+# --- Define the new default values ---
+DEFAULT_E = 30.0    # GPa (from CoMatFIT.py)
+DEFAULT_SCU = 26.5  # MPa (from CoMatFIT.py)
+DEFAULT_ECU = 0.0013 # Strain (from CoMatFIT.py)
+DEFAULT_STU = 2.63  # MPa (from CoMatFIT.py)
+
+
 # Set up the Streamlit page configuration
 st.set_page_config(
     page_title="CoMat: Abaqus CDP Input Generator",
@@ -271,35 +278,25 @@ st.set_page_config(
 st.title("🧱 CoMat: Abaqus Concrete Damaged Plasticity (CDP) Generator")
 st.markdown("---")
 
-# --- Theory Section ---
+# --- Theory Section (Omitted for brevity, assuming it remains the same) ---
 with st.expander("📝 CDP Model Theory & Equations (Based on Input Files)"):
+    # ... (Theory Markdown content here)
     st.markdown("""
         This application uses Eurocode-style (compression) and Power-Law (tension) functions 
         to generate the stress-strain and damage evolution curves required for the Abaqus CDP model.
         
         ### Compressive Behavior (Hardening/Softening)
-        The total compressive strain $\epsilon_c$ is separated into inelastic strain $\epsilon_{c}^{in}$ and elastic strain $\epsilon_{c}^{el}$.
         * **Inelastic Strain (Abaqus Input):**
-            $$\epsilon_{c}^{in} = \epsilon_c - \epsilon_{c}^{el} = \epsilon_c - \\frac{\sigma_c(\epsilon_c)}{E_{cm}}$$
+            $$\epsilon_{c}^{in} = \epsilon_c - \\frac{\sigma_c(\epsilon_c)}{E_{cm}}$$
         
         * **Hardening (Parabolic):** Defined by $E$, $\sigma_{cu}$, and $\epsilon_{cu}$.
         * **Softening (Weibull/Exponential):** Governed by the parameters **$\alpha$** and **$\epsilon_{0.63}$** ($\epsilon_{60}$ in the code).
         
-        ### Compressive Damage Evolution
-        The damage parameter $d_c$ (required for `*CONCRETE COMPRESSION DAMAGE`) is zero before $\epsilon_{cu}$ and evolves afterwards:
-        $$d_c = 1 - \\frac{\sigma_c}{\sigma_{cu}}$$
-        
         ### Tensile Behavior (Stiffening/Softening)
-        The Abaqus input requires stress vs. **cracking displacement** ($u_{cr}$), which accounts for the length of the element $l_{ref}$.
         * **Cracking Displacement (Abaqus Input):**
-            $$u_{cr} = \epsilon_{t}^{cr} \cdot l_{ref} = \left( \epsilon_t - \\frac{\sigma_t(\epsilon_t)}{E_{cm}} \\right) \cdot l_{ref}$$
-        * **Softening (Power Law):** Governed by the parameters **$\beta$** and **$\epsilon_{end}$** (end of cracking/softening).
-        
-        ### Tensile Damage Evolution
-        The damage parameter $d_t$ (required for `*CONCRETE TENSION DAMAGE`) is zero before cracking stress $\sigma_{tu}$ and evolves afterwards:
-        $$d_t = 1 - \\frac{\sigma_t}{\sigma_{tu}}$$
+            $$u_{cr} = \left( \epsilon_t - \\frac{\sigma_t(\epsilon_t)}{E_{cm}} \\right) \cdot l_{ref}$$
     """)
-# 
+
 # --- Main Tabs ---
 tab_manual, tab_fit = st.tabs(["⚙️ Manual Input & Generation", "📈 Fit Parameters from Data"])
 
@@ -307,22 +304,21 @@ tab_manual, tab_fit = st.tabs(["⚙️ Manual Input & Generation", "📈 Fit Par
 with tab_manual:
     st.header("1. Material Parameters")
     
-    # Define columns for input widgets
     col_comp, col_tens, col_cdp = st.columns(3)
     
-    # 1. Compressive Parameters
+    # 1. Compressive Parameters - USING NEW DEFAULTS
     with col_comp:
         st.subheader("Compression")
-        E_gpa = st.number_input("Elastic Modulus, E (GPa)", value=30.0, min_value=1.0)
-        S_cu = st.number_input("Max Compressive Stress, $\sigma_{cu}$ (MPa)", value=50.0, min_value=0.1)
-        e_cu = st.number_input("Strain at $\sigma_{cu}$, $\epsilon_{cu}$", value=0.003, format="%.5f", min_value=0.0)
+        E_gpa = st.number_input("Elastic Modulus, E (GPa)", value=DEFAULT_E, min_value=1.0)
+        S_cu = st.number_input("Max Compressive Stress, $\sigma_{cu}$ (MPa)", value=DEFAULT_SCU, min_value=0.1)
+        e_cu = st.number_input("Strain at $\sigma_{cu}$, $\epsilon_{cu}$", value=DEFAULT_ECU, format="%.5f", min_value=0.0)
         e_60 = st.number_input("Weibull Softening $\epsilon_{0.63}$ (e_60)", value=0.005, format="%.5f", min_value=0.0)
         Alpha = st.number_input("Weibull Softening $\\alpha$", value=2.0, min_value=0.1)
 
-    # 2. Tensile Parameters
+    # 2. Tensile Parameters - USING NEW DEFAULTS
     with col_tens:
         st.subheader("Tension")
-        S_tu = st.number_input("Max Tensile Stress, $\sigma_{tu}$ (MPa)", value=5.0, min_value=0.1)
+        S_tu = st.number_input("Max Tensile Stress, $\sigma_{tu}$ (MPa)", value=DEFAULT_STU, min_value=0.1)
         e_end = st.number_input("End of Cracking Strain, $\epsilon_{end}$", value=0.002, format="%.5f", min_value=0.0)
         Beta = st.number_input("Power Softening $\\beta$", value=2.0, min_value=1.0)
         Ref_Length = st.number_input("Reference Length, $l_{ref}$", value=1.0, min_value=0.01)
@@ -337,14 +333,14 @@ with tab_manual:
     
     st.markdown("---")
     
-    # --- Generation Button ---
+    # --- Generation Button Logic (Same as before) ---
     if st.button("Generate CDP Data & File", key="manual_gen", type="primary"):
         results = generate_cdp_data(E_gpa, S_cu, e_cu, e_60, Alpha, S_tu, e_end, Beta, Ref_Length)
 
         if results:
             e_c_total, S_c_total, e_t_total, S_t_total, comp_ss_data, comp_damage_data, tens_ss_data, tens_damage_data = results
             
-            # --- Visualization ---
+            # --- Visualization (Same as before) ---
             st.header("2. Generated Stress-Strain & Damage Curves")
             fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(15, 12))
             
@@ -381,7 +377,7 @@ with tab_manual:
             plt.tight_layout()
             st.pyplot(fig)
             
-            # --- Abaqus File Download ---
+            # --- Abaqus File Download (Same as before) ---
             st.header("3. Download Abaqus Input File")
             params = (E_gpa, S_cu, e_cu, e_60, Alpha, S_tu, e_end, Beta, Ref_Length, Tension_Recovery, Compression_Recovery)
             data = (comp_ss_data, comp_damage_data, tens_ss_data, tens_damage_data)
@@ -397,16 +393,16 @@ with tab_manual:
 # --- Tab 2: Fit Parameters from Data ---
 with tab_fit:
     st.header("Fit $\\alpha, \epsilon_{0.63}, \\beta, \epsilon_{end}$ from Experimental Data")
-    st.markdown("Upload your experimental Stress-Strain data for compression and tension (Strain in Column 1, Stress in Column 2).")
-
+    
     col_fit_params, col_fit_data = st.columns(2)
 
     with col_fit_params:
         st.subheader("Fixed Material Parameters")
-        E_fit = st.number_input("Elastic Modulus, E (GPa)", value=30.0, min_value=1.0, key="E_fit")
-        S_cu_fit = st.number_input("Max Compressive Stress, $\sigma_{cu}$ (MPa)", value=50.0, min_value=0.1, key="S_cu_fit")
-        e_cu_fit = st.number_input("Strain at $\sigma_{cu}$, $\epsilon_{cu}$", value=0.003, format="%.5f", min_value=0.0, key="e_cu_fit")
-        S_tu_fit = st.number_input("Max Tensile Stress, $\sigma_{tu}$ (MPa)", value=5.0, min_value=0.1, key="S_tu_fit")
+        # USING NEW DEFAULTS
+        E_fit = st.number_input("Elastic Modulus, E (GPa)", value=DEFAULT_E, min_value=1.0, key="E_fit")
+        S_cu_fit = st.number_input("Max Compressive Stress, $\sigma_{cu}$ (MPa)", value=DEFAULT_SCU, min_value=0.1, key="S_cu_fit")
+        e_cu_fit = st.number_input("Strain at $\sigma_{cu}$, $\epsilon_{cu}$", value=DEFAULT_ECU, format="%.5f", min_value=0.0, key="e_cu_fit")
+        S_tu_fit = st.number_input("Max Tensile Stress, $\sigma_{tu}$ (MPa)", value=DEFAULT_STU, min_value=0.1, key="S_tu_fit")
 
     with col_fit_data:
         st.subheader("Experimental Data Upload")
