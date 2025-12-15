@@ -1,5 +1,0 @@
-- 👋 Hi, I’m Abdulrahman Salah
-- 👀 I’m interested in programming for engineering 
-- 🌱 I’m currently learning python
-- 💞️ I’m looking to collaborate on application in structural engineering
-- 📫 How to reach me ...
