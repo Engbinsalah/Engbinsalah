@@ -152,12 +152,12 @@ def calculate_cdp_data(inputs):
     d_c_filt, inel_c_filt = filter_damage_arrays(d_c, inel_c_abaqus)
     d_t_filt, x_t_filt = filter_damage_arrays(d_t, x_tens_arr)
     
-    # --- FIX: FORCE FIRST POINT OF COMPRESSION DAMAGE TO (0, 0) ---
-    # This ensures damage starts exactly at yield (strain=0) with value 0.
-    if len(inel_c_filt) > 0 and inel_c_filt[0] > 0.0:
-        d_c_filt = np.insert(d_c_filt, 0, 0.0)
-        inel_c_filt = np.insert(inel_c_filt, 0, 0.0)
-    # -------------------------------------------------------------
+    # --- FIX: OVERWRITE FIRST POINT STRAIN TO ZERO ---
+    # Instead of adding a new row, we force the inelastic strain of the 
+    # first damage point (which is zero damage) to be exactly 0.0.
+    if len(inel_c_filt) > 0:
+        inel_c_filt[0] = 0.0
+    # -------------------------------------------------
 
     comp_dmg_table = list(zip(d_c_filt, inel_c_filt))
     tens_dmg_table = list(zip(d_t_filt, x_t_filt))
@@ -273,14 +273,14 @@ with st.sidebar:
                   'n_tens_pts': n_tens, 'tens_type': tens_type, 'l_char': l_char,
                   'dil': dil, 'ecc': ecc, 'fb0': fb0, 'K': K_val, 'visc': visc}
 
-if 'cdp_results_v24' not in st.session_state: st.session_state['cdp_results_v24'] = None
-if gen_clicked: st.session_state['cdp_results_v24'] = calculate_cdp_data(input_dict)
+if 'cdp_results_v25' not in st.session_state: st.session_state['cdp_results_v25'] = None
+if gen_clicked: st.session_state['cdp_results_v25'] = calculate_cdp_data(input_dict)
 
 tab1, tab2 = st.tabs(["📊 Results & Copy Data", "📝 Theory"])
 
 with tab1:
-    if st.session_state['cdp_results_v24']:
-        res = st.session_state['cdp_results_v24']
+    if st.session_state['cdp_results_v25']:
+        res = st.session_state['cdp_results_v25']
         pd = res['plot_data']
         u_label = UNIT_SYSTEMS[input_dict['unit_sys']]['E_unit']
         
@@ -347,7 +347,7 @@ with tab2:
 
     st.markdown("**Compressive Damage ($d_c$):**")
     st.latex(r"d_c = 1 - \frac{\sigma_c}{f'_c} \quad (\text{for } \epsilon_c > \epsilon_{c1})")
-    st.markdown("**Note:** The output table is forced to start at `(0.0, 0.0)` to define a zero-damage state at the yield point.")
+    st.markdown("**Note:** The first point of damage (where $d_c=0$) is assigned an inelastic strain of `0.0` to ensure consistency with Abaqus requirements.")
 
     st.divider()
 
