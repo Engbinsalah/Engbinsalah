@@ -36,11 +36,26 @@ UNIT_SYSTEMS = {
 # Helper Functions
 # ---------------------------
 def pcf_to_density_US(pcf: float, unit_sys: str):
-    gamma_in3 = pcf / 1728.0
-    if unit_sys == "US (in, lbf, s)": return gamma_in3 / G_IN
-    elif unit_sys == "US (in, kip, s)": return (gamma_in3 / 1000.0) / G_IN
-    elif unit_sys == "SI (m, N, kg, s)": return 2400.0
-    elif unit_sys == "SI (mm, N, tonne, s)": return 2.4e-9
+    # 1 pcf approx 16.0185 kg/m^3
+    rho_kg_m3 = pcf * 16.018463
+    
+    if unit_sys == "SI (m, N, kg, s)":
+        # Return kg/m^3
+        return rho_kg_m3
+    elif unit_sys == "SI (mm, N, tonne, s)":
+        # Return tonne/mm^3
+        # 1 kg = 0.001 tonne
+        # 1 m^3 = 10^9 mm^3
+        # Factor = 1e-3 / 1e9 = 1e-12
+        return rho_kg_m3 * 1.0e-12
+    else:
+        # US Units: density = weight_density / gravity
+        gamma_in3 = pcf / 1728.0
+        if unit_sys == "US (in, lbf, s)": 
+            return gamma_in3 / G_IN
+        elif unit_sys == "US (in, kip, s)": 
+            return (gamma_in3 / 1000.0) / G_IN
+            
     return 0.0
 
 def filter_damage_arrays(damage_arr, x_arr):
@@ -71,6 +86,7 @@ def calculate_cdp_data(inputs):
     
     E_out = E_input
     fc_out = fc
+    # --- FIX: CALL NEW DENSITY FUNCTION ---
     rho_out = pcf_to_density_US(wc_pcf, unit_sys)
 
     # --- COMPRESSION (Carreira-Chu) ---
@@ -153,8 +169,6 @@ def calculate_cdp_data(inputs):
     d_t_filt, x_t_filt = filter_damage_arrays(d_t, x_tens_arr)
     
     # --- FIX: OVERWRITE FIRST POINT STRAIN TO ZERO ---
-    # Instead of adding a new row, we force the inelastic strain of the 
-    # first damage point (which is zero damage) to be exactly 0.0.
     if len(inel_c_filt) > 0:
         inel_c_filt[0] = 0.0
     # -------------------------------------------------
@@ -273,14 +287,14 @@ with st.sidebar:
                   'n_tens_pts': n_tens, 'tens_type': tens_type, 'l_char': l_char,
                   'dil': dil, 'ecc': ecc, 'fb0': fb0, 'K': K_val, 'visc': visc}
 
-if 'cdp_results_v25' not in st.session_state: st.session_state['cdp_results_v25'] = None
-if gen_clicked: st.session_state['cdp_results_v25'] = calculate_cdp_data(input_dict)
+if 'cdp_results_v26' not in st.session_state: st.session_state['cdp_results_v26'] = None
+if gen_clicked: st.session_state['cdp_results_v26'] = calculate_cdp_data(input_dict)
 
 tab1, tab2 = st.tabs(["📊 Results & Copy Data", "📝 Theory"])
 
 with tab1:
-    if st.session_state['cdp_results_v25']:
-        res = st.session_state['cdp_results_v25']
+    if st.session_state['cdp_results_v26']:
+        res = st.session_state['cdp_results_v26']
         pd = res['plot_data']
         u_label = UNIT_SYSTEMS[input_dict['unit_sys']]['E_unit']
         
