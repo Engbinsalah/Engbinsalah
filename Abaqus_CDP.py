@@ -109,29 +109,23 @@ def calculate_cdp_data(inputs):
             d_c[i] = min(0.99, max(0.0, 1.0 - ratio))
 
     # --- TENSION (Eurocode 2 + Belarbi/Hsu) ---
-    # 1. Peak Tensile Strength (Eurocode 2)
-    # fctm = 0.30 * fck^(2/3). strictly in MPa.
     fc_mpa = fc_out * u_props['to_MPa']
     ft_mpa = 0.30 * (fc_mpa ** (2.0/3.0))
     ft_out = ft_mpa / u_props['to_MPa']
 
-    # 2. Critical Cracking Strain
+    # Critical Cracking Strain
     eps_cr = ft_out / E_out
 
-    # 3. Generate Strains (Belarbi & Hsu)
-    # Model: sig = ft * (eps_cr / eps)^0.4
-    # We generate points starting from eps_cr up to a multiplier to capture the tail.
-    max_strain_mult = 150.0 # Extend far enough to see the curve decay
+    # Generate Strains (Belarbi & Hsu)
+    max_strain_mult = 150.0 
     eps_t_total = np.linspace(eps_cr, eps_cr * max_strain_mult, inputs['n_tens_pts'])
 
-    # 4. Calculate Stress
+    # Calculate Stress
     ratio_eps = eps_cr / eps_t_total
     sig_t_arr = ft_out * (ratio_eps ** 0.4)
-    
-    # Ensure start point is exactly (eps_cr, ft)
     sig_t_arr[0] = ft_out
     
-    # 5. Damage (Linear degradation assumption relative to stress loss)
+    # Damage
     d_t = 1.0 - (sig_t_arr / ft_out)
     d_t = np.maximum(0.0, np.minimum(0.99, d_t))
 
@@ -139,28 +133,32 @@ def calculate_cdp_data(inputs):
     l_char = inputs['l_char']
     if l_char <= 0: l_char = 1.0
     
-    # Abaqus requires Cracking Strain = Total Strain - Elastic Strain
-    # eps_ck = eps_total - (sigma / E)
     eps_ck_arr = eps_t_total - (sig_t_arr / E_out)
-    eps_ck_arr = np.maximum(eps_ck_arr, 0.0) # Safety
+    eps_ck_arr = np.maximum(eps_ck_arr, 0.0)
     
     if inputs['tens_type'] == "Strain":
         x_tens_arr = eps_ck_arr
         x_label = "Cracking Strain"
         inp_type = "STRAIN"
     else:
-        # Displacement = Cracking Strain * Characteristic Length
         x_tens_arr = eps_ck_arr * l_char
         x_label = f"Displacement ({u_props['len_unit']})"
         inp_type = "DISPLACEMENT"
 
-    # --- FILTERING ---
+    # --- FILTERING & FINALIZING ---
     comp_table = list(zip(sig_c_abaqus, inel_c_abaqus))
     tens_table = list(zip(sig_t_arr, x_tens_arr))
     
     d_c_filt, inel_c_filt = filter_damage_arrays(d_c, inel_c_abaqus)
     d_t_filt, x_t_filt = filter_damage_arrays(d_t, x_tens_arr)
     
+    # --- FIX: FORCE FIRST POINT OF COMPRESSION DAMAGE TO (0, 0) ---
+    # This ensures damage starts exactly at yield (strain=0) with value 0.
+    if len(inel_c_filt) > 0 and inel_c_filt[0] > 0.0:
+        d_c_filt = np.insert(d_c_filt, 0, 0.0)
+        inel_c_filt = np.insert(inel_c_filt, 0, 0.0)
+    # -------------------------------------------------------------
+
     comp_dmg_table = list(zip(d_c_filt, inel_c_filt))
     tens_dmg_table = list(zip(d_t_filt, x_t_filt))
     
@@ -275,14 +273,14 @@ with st.sidebar:
                   'n_tens_pts': n_tens, 'tens_type': tens_type, 'l_char': l_char,
                   'dil': dil, 'ecc': ecc, 'fb0': fb0, 'K': K_val, 'visc': visc}
 
-if 'cdp_results_v23' not in st.session_state: st.session_state['cdp_results_v23'] = None
-if gen_clicked: st.session_state['cdp_results_v23'] = calculate_cdp_data(input_dict)
+if 'cdp_results_v24' not in st.session_state: st.session_state['cdp_results_v24'] = None
+if gen_clicked: st.session_state['cdp_results_v24'] = calculate_cdp_data(input_dict)
 
 tab1, tab2 = st.tabs(["📊 Results & Copy Data", "📝 Theory"])
 
 with tab1:
-    if st.session_state['cdp_results_v23']:
-        res = st.session_state['cdp_results_v23']
+    if st.session_state['cdp_results_v24']:
+        res = st.session_state['cdp_results_v24']
         pd = res['plot_data']
         u_label = UNIT_SYSTEMS[input_dict['unit_sys']]['E_unit']
         
@@ -349,6 +347,7 @@ with tab2:
 
     st.markdown("**Compressive Damage ($d_c$):**")
     st.latex(r"d_c = 1 - \frac{\sigma_c}{f'_c} \quad (\text{for } \epsilon_c > \epsilon_{c1})")
+    st.markdown("**Note:** The output table is forced to start at `(0.0, 0.0)` to define a zero-damage state at the yield point.")
 
     st.divider()
 
