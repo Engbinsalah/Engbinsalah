@@ -69,11 +69,6 @@ def calculate_cdp_data(inputs):
     E_input = inputs['E_modulus'] 
     u_props = UNIT_SYSTEMS[unit_sys]
     
-    # Scale Factors
-    if u_props['len_unit'] == 'm': scale_disp = 0.001 
-    elif u_props['len_unit'] == 'mm': scale_disp = 1.0 
-    else: scale_disp = 1/25.4 # inches
-
     E_out = E_input
     fc_out = fc
     rho_out = pcf_to_density_US(wc_pcf, unit_sys)
@@ -113,40 +108,49 @@ def calculate_cdp_data(inputs):
             ratio = s / fc_out
             d_c[i] = min(0.99, max(0.0, 1.0 - ratio))
 
-    # --- TENSION (Hordijk) ---
-    fc_psi = fc_out * u_props['to_psi']
-    ft_psi = inputs['ft_factor'] * math.sqrt(fc_psi)
-    ft_out = ft_psi / u_props['to_psi']
-    
+    # --- TENSION (Eurocode 2 + Belarbi/Hsu) ---
+    # 1. Peak Tensile Strength (Eurocode 2)
+    # fctm = 0.30 * fck^(2/3). strictly in MPa.
     fc_mpa = fc_out * u_props['to_MPa']
-    Gf_n_mm = 0.073 * (fc_mpa**0.18)
+    ft_mpa = 0.30 * (fc_mpa ** (2.0/3.0))
+    ft_out = ft_mpa / u_props['to_MPa']
+
+    # 2. Critical Cracking Strain
+    eps_cr = ft_out / E_out
+
+    # 3. Generate Strains (Belarbi & Hsu)
+    # Model: sig = ft * (eps_cr / eps)^0.4
+    # We generate points starting from eps_cr up to a multiplier to capture the tail.
+    max_strain_mult = 150.0 # Extend far enough to see the curve decay
+    eps_t_total = np.linspace(eps_cr, eps_cr * max_strain_mult, inputs['n_tens_pts'])
+
+    # 4. Calculate Stress
+    ratio_eps = eps_cr / eps_t_total
+    sig_t_arr = ft_out * (ratio_eps ** 0.4)
     
-    ft_mpa = ft_out * u_props['to_MPa']
-    wc_mm = 5.14 * (Gf_n_mm / ft_mpa)
-    wc_out = wc_mm * scale_disp
-    
-    w_arr = np.linspace(0, wc_out, inputs['n_tens_pts'])
-    ratio = w_arr / wc_out
-    
-    term1 = 1 + (3 * ratio**3)
-    term2 = np.exp(-6.93 * ratio)
-    sig_t_arr = ft_out * term1 * term2
-    sig_t_arr = np.maximum(sig_t_arr, 0.0)
+    # Ensure start point is exactly (eps_cr, ft)
     sig_t_arr[0] = ft_out
     
+    # 5. Damage (Linear degradation assumption relative to stress loss)
     d_t = 1.0 - (sig_t_arr / ft_out)
     d_t = np.maximum(0.0, np.minimum(0.99, d_t))
 
-    # --- TENSION TYPE ---
+    # --- TENSION TYPE FOR ABAQUS ---
+    l_char = inputs['l_char']
+    if l_char <= 0: l_char = 1.0
+    
+    # Abaqus requires Cracking Strain = Total Strain - Elastic Strain
+    # eps_ck = eps_total - (sigma / E)
+    eps_ck_arr = eps_t_total - (sig_t_arr / E_out)
+    eps_ck_arr = np.maximum(eps_ck_arr, 0.0) # Safety
+    
     if inputs['tens_type'] == "Strain":
-        l_char = inputs['l_char']
-        if l_char <= 0: l_char = 1.0
-        # Cracking Strain = w / l_char
-        x_tens_arr = w_arr / l_char
+        x_tens_arr = eps_ck_arr
         x_label = "Cracking Strain"
         inp_type = "STRAIN"
     else:
-        x_tens_arr = w_arr
+        # Displacement = Cracking Strain * Characteristic Length
+        x_tens_arr = eps_ck_arr * l_char
         x_label = f"Displacement ({u_props['len_unit']})"
         inp_type = "DISPLACEMENT"
 
@@ -196,7 +200,7 @@ def generate_inp_text(res, inputs, name):
 # ---------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title("🧱 " + APP_TITLE)
-st.markdown("Generate Abaqus input data using **Carreira-Chu (Compression)** and **Hordijk (Tension)** models.")
+st.markdown("Generate Abaqus input data using **Carreira-Chu (Compression)** and **Belarbi & Hsu (Tension)** models.")
 
 # Sidebar
 with st.sidebar:
@@ -241,21 +245,21 @@ with st.sidebar:
         eps_u = st.number_input("Ultimate strain (ε_cu1)", 0.003, 0.05, 0.0200, 0.0005, format="%.6f")
         n_comp = st.slider("Num Points (Comp)", 10, 200, 50)
         
-    with st.expander("Tension (Hordijk)", expanded=True):
-        tens_type = st.radio("Tension Type", ["Strain", "Displacement"], index=0, horizontal=True)
+    with st.expander("Tension (Eurocode/Belarbi)", expanded=True):
+        st.info("Peak strength determined by Eurocode 2. Softening by Belarbi & Hsu.")
+        tens_type = st.radio("Abaqus Input Type", ["Strain", "Displacement"], index=0, horizontal=True, help="Defines how the data is written to the .inp file.")
         
-        # Smart Default for Characteristic Length
-        if u_props['len_unit'] == 'mm': def_l_char = 100.0
-        elif u_props['len_unit'] == 'm': def_l_char = 0.1
-        else: def_l_char = 4.0 # inches
-            
         l_char = 1.0
-        if tens_type == "Strain":
+        if tens_type == "Displacement":
+             # Smart Default for Characteristic Length
+            if u_props['len_unit'] == 'mm': def_l_char = 100.0
+            elif u_props['len_unit'] == 'm': def_l_char = 0.1
+            else: def_l_char = 4.0 # inches
+            
             l_char = st.number_input(f"Characteristic Element Length ({u_props['len_unit']})", 
                                      value=def_l_char, format="%.4f",
-                                     help=f"Representative finite element size. Used to convert displacement to strain: ε = w / l_char")
+                                     help=f"Used to convert Strain to Displacement: u = ε * l_char")
         
-        ft_fac = st.number_input("ft factor (x sqrt(f'c))", 4.0, 12.0, 6.7)
         n_tens = st.slider("Num Points (Tens)", 5, 50, 15)
 
     st.header("4. Plasticity")
@@ -268,17 +272,17 @@ with st.sidebar:
 
     input_dict = {'fc': fc, 'wc_pcf': wc_pcf, 'unit_sys': unit_sys, 'E_modulus': E_final, 'nu': nu,
                   'eps_peak': eps_peak, 'eps_u': eps_u, 'n_comp_pts': n_comp, 
-                  'ft_factor': ft_fac, 'n_tens_pts': n_tens, 'tens_type': tens_type, 'l_char': l_char,
+                  'n_tens_pts': n_tens, 'tens_type': tens_type, 'l_char': l_char,
                   'dil': dil, 'ecc': ecc, 'fb0': fb0, 'K': K_val, 'visc': visc}
 
-if 'cdp_results_v22' not in st.session_state: st.session_state['cdp_results_v22'] = None
-if gen_clicked: st.session_state['cdp_results_v22'] = calculate_cdp_data(input_dict)
+if 'cdp_results_v23' not in st.session_state: st.session_state['cdp_results_v23'] = None
+if gen_clicked: st.session_state['cdp_results_v23'] = calculate_cdp_data(input_dict)
 
 tab1, tab2 = st.tabs(["📊 Results & Copy Data", "📝 Theory"])
 
 with tab1:
-    if st.session_state['cdp_results_v22']:
-        res = st.session_state['cdp_results_v22']
+    if st.session_state['cdp_results_v23']:
+        res = st.session_state['cdp_results_v23']
         pd = res['plot_data']
         u_label = UNIT_SYSTEMS[input_dict['unit_sys']]['E_unit']
         
@@ -300,7 +304,7 @@ with tab1:
             st.subheader("Tension")
             st.caption(f"Type: **{res['inp_type']}**")
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 8))
-            ax1.plot(pd['t_x'], pd['t_sig'], c='green', label='Hordijk', lw=2)
+            ax1.plot(pd['t_x'], pd['t_sig'], c='green', label='Belarbi & Hsu', lw=2)
             ax1.scatter([0], [pd['ft']], c='red', zorder=5)
             ax1.text(0, pd['ft']*1.02, f"Peak: {pd['ft']:.4f}", color='red', ha='left')
             ax1.set_ylabel(f"Stress ({u_label})"); ax1.set_xlabel(res['x_label']); ax1.grid(True, alpha=0.3)
@@ -328,7 +332,7 @@ with tab1:
 
 with tab2:
     st.header("Constitutive Theory & References")
-    st.markdown("This generator creates input data for the **Concrete Damaged Plasticity (CDP)** model in Abaqus. The stress-strain behavior is derived from established empirical relationships, and damage variables are calculated based on stiffness degradation assumptions.")
+    st.markdown("This generator creates input data for the **Concrete Damaged Plasticity (CDP)** model in Abaqus.")
     
     st.divider()
 
@@ -341,51 +345,39 @@ with tab2:
     st.latex(r"\eta = \frac{\epsilon_c}{\epsilon_{c1}}, \quad k = 1.05 E_{cm} \frac{\epsilon_{c1}}{f'_c}")
     
     st.markdown("**Inelastic Strain:**")
-    st.markdown("Abaqus requires the inelastic strain, not total strain. It is calculated by removing the elastic component:")
     st.latex(r"\tilde{\epsilon}_c^{in} = \epsilon_c - \frac{\sigma_c}{E_0}")
 
     st.markdown("**Compressive Damage ($d_c$):**")
-    st.markdown("In this tool, damage is assumed to evolve linearly with stress loss on the softening branch (post-peak):")
     st.latex(r"d_c = 1 - \frac{\sigma_c}{f'_c} \quad (\text{for } \epsilon_c > \epsilon_{c1})")
-    st.caption("*Note: This assumes stiffness degrades proportionally to the loss of load-carrying capacity.*")
 
     st.divider()
 
     # --- 2. TENSION ---
     st.subheader("2. Tensile Behavior")
-    st.markdown("**Stress-Displacement Model (Hordijk, 1991):**")
-    st.markdown("Tensile softening is modeled using a crack opening displacement ($w$) formulation:")
-    st.latex(r"\sigma_t = f_{t} \left[ 1 + \left(3 \frac{w}{w_c}\right)^3 \right] \exp\left(-6.93 \frac{w}{w_c}\right)")
-    st.markdown("The critical crack opening $w_c$ (where $\sigma_t \to 0$) is derived from fracture energy:")
-    st.latex(r"w_c = 5.14 \frac{G_F}{f_{t}}")
+    st.markdown("The tensile model combines **Eurocode 2** for strength prediction and **Belarbi & Hsu** for post-cracking stiffening.")
     
+    st.markdown("**Peak Tensile Strength (Eurocode 2):**")
+    st.markdown("The mean tensile strength $f_{ctm}$ is derived from the compressive strength (requires conversion to MPa):")
+    st.latex(r"f_{ctm} = 0.30 \cdot f_{ck}^{(2/3)} \quad (\text{MPa})")
+    
+    st.markdown("**Tension Stiffening (Belarbi & Hsu, 1994):**")
+    st.markdown("The post-cracking stress follows a power-law decay:")
+    st.latex(r"\sigma_t = f_{ctm} \left(\frac{\epsilon_{cr}}{\epsilon_t}\right)^{0.4} \quad \text{for } \epsilon_t > \epsilon_{cr}")
+    st.markdown("Where $\epsilon_{cr} = f_{ctm} / E_c$.")
+
     st.markdown("**Tensile Damage ($d_t$):**")
-    st.markdown("Similar to compression, tensile damage is defined by the ratio of current stress to peak strength:")
-    st.latex(r"d_t = 1 - \frac{\sigma_t}{f_t}")
+    st.markdown("Damage is defined by the ratio of current stress to peak strength:")
+    st.latex(r"d_t = 1 - \frac{\sigma_t}{f_{ctm}}")
 
-    st.markdown("**Regularization ($l_{char}$):**")
-    st.markdown("To minimize mesh dependency, Abaqus allows defining tension by **Displacement** ($w$) or **Cracking Strain** ($\tilde{\epsilon}_t^{ck}$). If 'Strain' is selected, the characteristic length $l_{char}$ (representative element size) is used to convert displacement to strain:")
-    st.latex(r"\tilde{\epsilon}_t^{ck} = \frac{w}{l_{char}}")
-
-    st.divider()
-
-    # --- 3. PARAMETERS ---
-    st.subheader("3. Material Parameters")
-    
-    st.markdown("**Fracture Energy ($G_F$):**")
-    st.markdown("Estimated using the **CEB-FIP Model Code (1990/2010)** correlation:")
-    st.latex(r"G_F = 0.073 \cdot (f'_{c,MPa})^{0.18} \quad \text{(N/mm)}")
-
-    st.markdown("**Elastic Modulus ($E_c$):**")
-    st.markdown("Calculated based on the selected standard:")
-    st.markdown("- **ACI 318:** $E_c = 57,000 \sqrt{f'_{c, psi}}$ (Simple) or $33 w_c^{1.5} \sqrt{f'_{c, psi}}$ (Density)")
-    st.markdown("- **Eurocode 2:** $E_{cm} = 22,000 \cdot [0.1(f'_{c,MPa} + 8)]^{0.3}$")
+    st.markdown("**Abaqus Implementation:**")
+    st.markdown("The calculated total strains are converted to **Cracking Strain** ($\tilde{\epsilon}_t^{ck}$) or **Displacement** ($u$) for Abaqus:")
+    st.latex(r"\tilde{\epsilon}_t^{ck} = \epsilon_t - \sigma_t/E_0")
+    st.latex(r"u = \tilde{\epsilon}_t^{ck} \cdot l_{char}")
 
     st.divider()
     
     # --- REFERENCES ---
     st.caption("**References:**")
-    st.caption("1. Carreira, D. J., & Chu, K. H. (1985). *Stress-strain relationship for plain concrete in compression*. ACI Journal.")
-    st.caption("2. Hordijk, D. A. (1991). *Local approach to fatigue of concrete*. PhD Thesis, Delft University of Technology.")
-    st.caption("3. ACI Committee 318 (2019). *Building Code Requirements for Structural Concrete*.")
-    st.caption("4. Dassault Systèmes. *Abaqus Analysis User's Guide*, Section 23.6.3: Concrete Damaged Plasticity.")
+    st.caption("1. Carreira, D. J., & Chu, K. H. (1985). *Stress-strain relationship for plain concrete in compression*.")
+    st.caption("2. Eurocode 2: Design of concrete structures - Part 1-1. (Clause 3.1.2).")
+    st.caption("3. Belarbi, A., & Hsu, T.T.C. (1994). *Constitutive Laws of Concrete in Tension and Reinforcing Bars Stiffened by Concrete*.")
