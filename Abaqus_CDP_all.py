@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import io
 import math
 
-APP_TITLE = "Abaqus CDP Material Generator (Advanced)"
+APP_TITLE = "Abaqus CDP Material Generator"
 
 # ---------------------------
 # Unit systems & Constants
@@ -62,16 +62,26 @@ def snippet_elastic(E, nu): return f"*ELASTIC\n{E:.6g}, {nu:.6g}\n"
 # ---------------------------
 def calc_sargin_1971(eta, fc, k):
     # Sargin D=1 (Asymptotic)
+    # Safe from singularity
     numerator = k * eta
     denominator = 1 + (k - 2) * eta + (eta**2)
     return fc * (numerator / denominator)
 
-def calc_eurocode_2(eta, fc, k):
-    # EC2 / Sargin D=0 (Parabolic)
-    numerator = k * eta - (eta**2)
-    denominator = 1 + (k - 2) * eta
-    with np.errstate(divide='ignore', invalid='ignore'):
-        sig = fc * (numerator / denominator)
+def calc_eurocode_2(eta_arr, fc, k):
+    # EC2 (Parabolic)
+    # Warning: Denominator 1 + (k-2)eta can be zero if k < 2.0
+    sig = np.zeros_like(eta_arr)
+    
+    for i, eta in enumerate(eta_arr):
+        denom = 1 + (k - 2) * eta
+        
+        # SAFETY CHECK: If denom is close to zero or negative, force zero stress
+        if denom <= 0.01: 
+            sig[i] = 0.0
+        else:
+            val = fc * (k * eta - (eta**2)) / denom
+            sig[i] = max(0.0, val) # No negative stress
+            
     return sig
 
 def calc_carreira_chu(eta, fc, beta):
@@ -93,14 +103,11 @@ def calc_modified_hognestad(eps_arr, fc, eps_0, eps_u):
     return sig
 
 def apply_cutoff(strain_arr, stress_arr, fc, threshold_ratio=0.05):
-    """
-    Cuts off the curve if stress drops below (threshold * fc) AFTER the peak.
-    """
+    """Cut curve if stress drops below 5% of peak"""
     peak_idx = np.argmax(stress_arr)
     threshold_stress = threshold_ratio * fc
-    
-    # Check points after peak
     cutoff_idx = len(stress_arr) 
+    
     for i in range(peak_idx + 1, len(stress_arr)):
         if stress_arr[i] < threshold_stress:
             cutoff_idx = i
@@ -125,7 +132,7 @@ def calculate_cdp_data(inputs):
     eps_cu1 = inputs['eps_u']
     
     # 1. Strain Arrays
-    # Generate plenty of points to catch the drop
+    # We generate a bit further to capture the drop
     eps_c_arr = np.linspace(0, eps_cu1, int(inputs['n_comp_pts']*1.5))
     eta = eps_c_arr / eps_c1
     
@@ -133,10 +140,15 @@ def calculate_cdp_data(inputs):
     k_val = 1.05 * E_out * eps_c1 / fc
     
     # Beta (Carreira)
+    # Check bounds for beta calculation to prevent division by zero
     beta_denom = 1 - (fc / (E_out * eps_c1))
-    beta_val = 1.0 / beta_denom if beta_denom > 0.01 else (fc * u_props['to_ksi'] / 4.7)**3 + 1.55
+    if abs(beta_denom) < 0.001 or beta_denom < 0:
+        # Fallback to empirical equation if constitutive def fails
+        beta_val = (fc * u_props['to_ksi'] / 4.7)**3 + 1.55
+    else:
+        beta_val = 1.0 / beta_denom
 
-    # 3. Calculate All Curves (for comparison)
+    # 3. Calculate All Curves
     sig_sargin = calc_sargin_1971(eta, fc, k_val)
     sig_ec2 = calc_eurocode_2(eta, fc, k_val)
     sig_cc = calc_carreira_chu(eta, fc, beta_val)
@@ -149,34 +161,28 @@ def calculate_cdp_data(inputs):
     elif model_choice == "Carreira & Chu (1985)": sig_raw = sig_cc
     else: sig_raw = sig_hog
     
-    # 5. APPLY CUTOFF (Force stop at 95% drop)
-    eps_final, sig_final = apply_cutoff(eps_c_arr, sig_raw, fc, threshold_ratio=0.05)
+    # 5. Apply Cutoff (95% Drop)
+    eps_final, sig_final = apply_cutoff(eps_c_arr, sig_raw, fc, 0.05)
     
-    # Apply Cutoff to comparison curves too for plotting cleanliness
-    # (Just basic masking for the plot)
-    def clean_plot_data(sig_arr):
-        e, s = apply_cutoff(eps_c_arr, sig_arr, fc, 0.05)
-        return e, s
-        
-    e_sarg, s_sarg = clean_plot_data(sig_sargin)
-    e_ec2, s_ec2 = clean_plot_data(sig_ec2)
-    e_cc, s_cc = clean_plot_data(sig_cc)
-    e_hog, s_hog = clean_plot_data(sig_hog)
+    # Clean comparison data for plotting
+    def clean(s_arr): return apply_cutoff(eps_c_arr, s_arr, fc, 0.05)
+    e_sarg, s_sarg = clean(sig_sargin)
+    e_ec2, s_ec2 = clean(sig_ec2)
+    e_cc, s_cc = clean(sig_cc)
+    e_hog, s_hog = clean(sig_hog)
 
-    # 6. Inelastic Strain & Hardening (Abaqus Input)
+    # 6. Inelastic Strain
     sig_final = np.maximum(sig_final, 0.0)
     c_inel = eps_final - (sig_final / E_out)
     
-    # Find yield point (40% fc)
     yield_limit = 0.40 * fc
     idx_start = np.argmax(sig_final >= yield_limit)
     
-    # Filter for Abaqus (must be monotonic inelastic strain, positive stress)
     sig_c_abaqus = sig_final[idx_start:]
     inel_c_abaqus = c_inel[idx_start:]
     inel_c_abaqus = np.maximum(inel_c_abaqus, 0.0)
     
-    # Enforce strictly increasing or constant inelastic strain
+    # Enforce Monotonicity
     if len(inel_c_abaqus) > 0: inel_c_abaqus[0] = 0.0
     for i in range(1, len(inel_c_abaqus)):
         if inel_c_abaqus[i] < inel_c_abaqus[i-1]: 
@@ -192,7 +198,6 @@ def calculate_cdp_data(inputs):
 
     # --- TENSION ---
     fc_mpa = fc * u_props['to_MPa']
-    # Eurocode 2 Tensile Strength
     ft_mpa = 0.30 * (fc_mpa ** (2.0/3.0))
     ft_out = ft_mpa / u_props['to_MPa']
     
@@ -275,10 +280,7 @@ def generate_inp_text(res, inputs, name):
 # ---------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title("🧱 " + APP_TITLE)
-st.markdown("""
-Generate Abaqus input data using **Sargin, EC2, Carreira-Chu, or Hognestad** models.
-**Note:** All models automatically stop when stress drops by **95%** (5% residual strength) to prevent numerical instability.
-""")
+st.markdown("Generate Abaqus input data using **Sargin, EC2, Carreira-Chu, or Hognestad** models.")
 
 # Sidebar
 with st.sidebar:
@@ -301,7 +303,6 @@ with st.sidebar:
     fc_psi = fc * u_props['to_psi']
     fc_mpa = fc * u_props['to_MPa']
     
-    # E Calculation Equations
     E_aci_s = (57000.0 * math.sqrt(fc_psi)) / u_props['to_psi']
     E_aci_d = (33.0 * (wc_pcf ** 1.5) * math.sqrt(fc_psi)) / u_props['to_psi']
     E_ec = (22000.0 * ((fc_mpa + 8) / 10.0) ** 0.3) / u_props['to_MPa']
@@ -342,20 +343,21 @@ with st.sidebar:
                   'n_tens_pts': n_tens, 'tens_type': tens_type, 'l_char': l_char,
                   'dil': dil, 'ecc': ecc, 'fb0': fb0, 'K': K_val, 'visc': visc}
 
-if 'cdp_res_v3' not in st.session_state: st.session_state['cdp_res_v3'] = None
-if gen_clicked: st.session_state['cdp_res_v3'] = calculate_cdp_data(input_dict)
+if 'cdp_res_v4' not in st.session_state: st.session_state['cdp_res_v4'] = None
+if gen_clicked: st.session_state['cdp_res_v4'] = calculate_cdp_data(input_dict)
 
 tab1, tab2 = st.tabs(["📊 Results & Copy Data", "📝 Theory & Calculations"])
 
 with tab1:
-    if st.session_state['cdp_res_v3']:
-        res = st.session_state['cdp_res_v3']
+    if st.session_state['cdp_res_v4']:
+        res = st.session_state['cdp_res_v4']
         pd_data = res['plot_data']
         comp_data = res['comparison_data']
         u_label = UNIT_SYSTEMS[input_dict['unit_sys']]['E_unit']
         
         # --- COMPARISON PLOT ---
         st.subheader("1. Model Comparison (with 95% Cutoff)")
+        st.caption("All curves are forced to stop when stress drops below 5% of f'c to prevent negative stress values.")
         
         fig_comp, ax_comp = plt.subplots(figsize=(10, 5))
         ax_comp.plot(comp_data['e_sarg'], comp_data['s_sarg'], label='Sargin (1971) [D=1]', lw=2)
@@ -387,50 +389,63 @@ with tab1:
         st.download_button("💾 Download .inp file", generate_inp_text(res, input_dict, "CONCRETE"), "concrete.inp")
 
 with tab2:
-    st.header("Theory & Parameter Calculations")
-    st.markdown("This section details exactly how every parameter in the code is calculated based on your inputs.")
+    st.header("1. Compressive Behavior")
     
-    if st.session_state['cdp_res_v3']:
-        calc = st.session_state['cdp_res_v3']['calc_info']
+    if st.session_state['cdp_res_v4']:
+        calc = st.session_state['cdp_res_v4']['calc_info']
         u_e = UNIT_SYSTEMS[input_dict['unit_sys']]['E_unit']
-        
-        st.subheader("1. Elastic Modulus ($E_c$)")
-        st.markdown(f"Selected Method: **{e_method}**")
-        if "ACI 318" in e_method:
-            st.latex(r"E_c = 57,000 \sqrt{f'_c} \quad \text{(psi)}")
-            st.markdown(f"Value Used: **{calc['E']:,.0f} {u_e}**")
-        elif "Eurocode" in e_method:
-            st.latex(r"E_{cm} = 22,000 \left(\frac{f_{cm}}{10}\right)^{0.3} \quad \text{(MPa)}")
-            st.markdown(f"Value Used: **{calc['E']:,.0f} {u_e}**")
-            
-        st.subheader("2. Shape Factors ($k$ & $\\beta$)")
-        st.markdown("Used to control the steepness of the stress-strain curve.")
-        
-        st.markdown("**A. Eurocode / Sargin Shape Factor ($k$):**")
-        st.latex(r"k = 1.05 E_{cm} \frac{\epsilon_{c1}}{f_{cm}}")
-        st.markdown(f"Calculated $k$: **{calc['k']:.4f}**")
-        
-        st.markdown("**B. Carreira & Chu Shape Factor ($\\beta$):**")
-        st.latex(r"\beta = \frac{1}{1 - \frac{f'_c}{\epsilon_{c1} E_c}}")
-        st.markdown(f"Calculated $\\beta$: **{calc['beta']:.4f}**")
-        
-        st.subheader("3. Tensile Strength ($f_t$)")
-        st.markdown("Derived from Eurocode 2 (EN 1992-1-1) empirical relationships.")
-        st.latex(r"f_{ctm} = 0.30 \cdot f_{ck}^{(2/3)} \quad \text{(MPa)}")
-        st.markdown(f"Calculated $f_t$: **{calc['ft']:.4f} {u_e}**")
-        
-    st.divider()
     
-    st.header("Constitutive Model References")
-    
-    st.subheader("1. Sargin (1971) - Asymptotic")
-    st.markdown("Selected for Explicit Dynamics to prevent negative stress (D=1).")
-    st.latex(r"\sigma_c = f'_c \frac{k \cdot \eta}{1 + (k-2)\eta + \eta^2}")
-    
-    st.subheader("2. Eurocode 2 (EN 1992-1-1)")
-    st.markdown("Standard Design Code formulation (Sargin D=0). Cutoff applied at 95% drop.")
-    st.latex(r"\sigma_c = f'_c \frac{k \cdot \eta - \eta^2}{1 + (k-2)\eta}")
+        # --- MODEL 1: SARGIN ---
+        st.subheader("Model 1: Sargin (1971)")
+        st.markdown("**Equation:**")
+        st.latex(r"\sigma_c = f'_c \frac{k \cdot \eta}{1 + (k-2)\eta + \eta^2}")
+        st.markdown("**Parameters:**")
+        st.markdown(f"* **Normalized Strain ($\eta$):** $\eta = \epsilon_c / \epsilon_{{c1}}$")
+        st.markdown(f"* **Shape Factor ($k$):**")
+        st.latex(r"k = 1.05 E_{cm} \frac{\epsilon_{c1}}{f'_c}")
+        st.markdown(f"   Calculated Value: **$k$ = {calc['k']:.4f}** (Derived from $E$={calc['E']:,.0f})")
 
-    st.subheader("3. Carreira & Chu (1985)")
-    st.markdown("Generalized Power Law model.")
-    st.latex(r"\sigma_c = f'_c \frac{\beta \cdot \eta}{\beta - 1 + \eta^\beta}")
+        st.divider()
+
+        # --- MODEL 2: EUROCODE ---
+        st.subheader("Model 2: Eurocode 2 (Sargin D=0)")
+        st.markdown("**Equation:**")
+        st.latex(r"\sigma_c = f'_c \frac{k \cdot \eta - \eta^2}{1 + (k-2)\eta}")
+        st.markdown("**Parameters:**")
+        st.markdown(f"* **Normalized Strain ($\eta$):** $\eta = \epsilon_c / \epsilon_{{c1}}$")
+        st.markdown(f"* **Shape Factor ($k$):**")
+        st.latex(r"k = 1.05 E_{cm} \frac{\epsilon_{c1}}{f'_c}")
+        st.markdown(f"   Calculated Value: **$k$ = {calc['k']:.4f}**")
+        st.warning("**Note:** If $k < 2.0$, this equation creates a singularity (division by zero) at high strains. The code automatically cuts the curve before this occurs.")
+
+        st.divider()
+
+        # --- MODEL 3: CARREIRA ---
+        st.subheader("Model 3: Carreira & Chu (1985)")
+        st.markdown("**Equation:**")
+        st.latex(r"\sigma_c = f'_c \frac{\beta \cdot \eta}{\beta - 1 + \eta^\beta}")
+        st.markdown("**Parameters:**")
+        st.markdown(f"* **Shape Factor ($\\beta$):**")
+        st.latex(r"\beta = \frac{1}{1 - \frac{f'_c}{\epsilon_{c1} E_c}}")
+        st.markdown(f"   Calculated Value: **$\\beta$ = {calc['beta']:.4f}**")
+
+        st.divider()
+        
+        # --- MODEL 4: HOGNESTAD ---
+        st.subheader("Model 4: Modified Hognestad")
+        st.markdown("**Equation:**")
+        st.markdown("Ascending branch (Parabolic):")
+        st.latex(r"\sigma_c = f'_c \left[ \frac{2\epsilon}{\epsilon_{c1}} - \left(\frac{\epsilon}{\epsilon_{c1}}\right)^2 \right]")
+        st.markdown("Descending branch (Linear): Drops to $0.85f'_c$ at $\epsilon_u$.")
+        
+    st.header("2. Tensile Behavior")
+    st.subheader("Reference: Eurocode 2 & Belarbi/Hsu")
+    
+    st.markdown("**1. Peak Tensile Strength ($f_t$):**")
+    st.markdown("Derived from Eurocode 2 (EN 1992-1-1):")
+    st.latex(r"f_{ctm} = 0.30 \cdot f_{ck}^{(2/3)} \quad \text{(MPa)}")
+    if st.session_state['cdp_res_v4']:
+        st.markdown(f"Calculated Value: **$f_t$ = {calc['ft']:.4f} {u_e}**")
+        
+    st.markdown("**2. Tension Stiffening (Belarbi & Hsu 1994):**")
+    st.latex(r"\sigma_t = f_{ctm} \left(\frac{\epsilon_{cr}}{\epsilon_t}\right)^{0.4}")
