@@ -3,137 +3,153 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-# Set page config
 st.set_page_config(page_title="RC Section Designer", layout="wide")
 
-# --- UI Styling Fix ---
+# --- Custom CSS ---
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
-    div[data-testid="stMetricValue"] { font-size: 24px; color: #1f77b4; }
+    div[data-testid="stMetricValue"] { font-size: 22px; color: #1f77b4; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏗️ Professional RC Section P-M Designer")
-st.caption("Calculation Reference: ACI 318-19 Strength Design Method")
+st.title("🏗️ Enhanced RC Section P-M Designer")
 
 # --- Sidebar Inputs ---
 with st.sidebar:
     st.header("📐 Section Geometry")
     b = st.number_input("Width (b) [mm]", value=300, step=10)
     h = st.number_input("Depth (h) [mm]", value=500, step=10)
-    
-    st.header("💪 Materials")
     fc = st.number_input("f'c [MPa]", value=30)
     fy = st.number_input("fy [MPa]", value=420)
-    
-    st.header("🔩 Reinforcement")
     cover = st.number_input("Clear Cover [mm]", value=40)
-    bar_dia = st.selectbox("Bar Diameter [mm]", [12, 16, 20, 25, 32], index=2)
-    n_bars = st.number_input("Bars per face (Top/Bot)", value=3, min_value=2)
 
-# --- Physical Properties ---
-Es = 200000 
-ecu = 0.003
-beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7) if fc > 28 else 0.85
-As_face = n_bars * (np.pi * (bar_dia**2) / 4)
-d = h - cover - bar_dia/2
-d_prime = cover + bar_dia/2
-
-# --- Logic Functions ---
-def get_phi(eps_t):
-    if eps_t <= 0.002: return 0.65 # Compression controlled
-    if eps_t >= 0.005: return 0.90 # Tension controlled
-    return 0.65 + (eps_t - 0.002) * (0.25 / 0.003)
-
-def generate_pm_data():
-    results = []
-    # From deep compression to pure tension
-    c_steps = np.concatenate([
-        np.linspace(h * 2, h, 20),     # Deep compression
-        np.linspace(h, 0.01 * h, 100)  # Transition to Tension
-    ])
+    st.header("🔩 Reinforcement Assignment")
+    st.info("Corners are always active (4 bars). Adjust faces below.")
     
-    for c in c_steps:
+    # Corner Bars (Fixed per your request)
+    c_dia = st.number_input("Corner Bar Dia [mm]", value=20)
+    
+    # Face Assignments
+    col_t, col_b = st.columns(2)
+    with col_t:
+        n_top = st.number_input("Top Face No.", value=4)
+        d_top = st.number_input("Top Dia", value=20)
+    with col_b:
+        n_bot = st.number_input("Bot Face No.", value=4)
+        d_bot = st.number_input("Bot Dia", value=20)
+        
+    col_l, col_r = st.columns(2)
+    with col_l:
+        n_left = st.number_input("Left Face No.", value=4)
+        d_left = st.number_input("Left Dia", value=20)
+    with col_r:
+        n_right = st.number_input("Right Face No.", value=4)
+        d_right = st.number_input("Right Dia", value=20)
+
+# --- Reinforcement Coordinate Logic ---
+def get_rebar_coords():
+    bars = [] # List of (x, y, area, dia, label)
+    
+    # 1. Corners
+    corner_area = np.pi * (c_dia**2) / 4
+    coords = [
+        (cover, cover), (b-cover, cover), 
+        (cover, h-cover), (b-cover, h-cover)
+    ]
+    for x, y in coords:
+        bars.append({'x': x, 'y': y, 'area': corner_area, 'dia': c_dia, 'type': 'Corner'})
+    
+    # 2. Top/Bottom Faces (excluding corners)
+    if n_top > 2:
+        x_top = np.linspace(cover, b-cover, n_top)[1:-1]
+        area = np.pi * (d_top**2) / 4
+        for x in x_top:
+            bars.append({'x': x, 'y': h-cover, 'area': area, 'dia': d_top, 'type': 'Top'})
+            
+    if n_bot > 2:
+        x_bot = np.linspace(cover, b-cover, n_bot)[1:-1]
+        area = np.pi * (d_bot**2) / 4
+        for x in x_bot:
+            bars.append({'x': x, 'y': cover, 'area': area, 'dia': d_bot, 'type': 'Bottom'})
+
+    # 3. Left/Right Faces (excluding corners)
+    if n_left > 2:
+        y_left = np.linspace(cover, h-cover, n_left)[1:-1]
+        area = np.pi * (d_left**2) / 4
+        for y in y_left:
+            bars.append({'x': cover, 'y': y, 'area': area, 'dia': d_left, 'type': 'Left'})
+            
+    if n_right > 2:
+        y_right = np.linspace(cover, h-cover, n_right)[1:-1]
+        area = np.pi * (d_right**2) / 4
+        for y in y_right:
+            bars.append({'x': b-cover, 'y': y, 'area': area, 'dia': d_right, 'type': 'Right'})
+            
+    return pd.DataFrame(bars)
+
+rebar_df = get_rebar_coords()
+total_as = rebar_df['area'].sum()
+
+# --- Interaction Diagram Engine ---
+def calculate_pm():
+    results = []
+    Es = 200000
+    ecu = 0.003
+    beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7) if fc > 28 else 0.85
+    
+    # Iterate Neutral Axis depth 'c'
+    c_vals = np.concatenate([np.linspace(h*2, h, 20), np.linspace(h, 1, 150)])
+    
+    for c in c_vals:
         a = min(beta1 * c, h)
         Cc = 0.85 * fc * a * b
-        eps_s_bot = ecu * (d - c) / c
-        eps_s_top = ecu * (c - d_prime) / c
-        fs_bot = np.clip(eps_s_bot * Es, -fy, fy)
-        fs_top = np.clip(eps_s_top * Es, -fy, fy)
         
-        Pn = (Cc + fs_top * As_face - fs_bot * As_face) / 1000
-        Mn = (Cc*(h/2 - a/2) + fs_top*As_face*(h/2 - d_prime) + fs_bot*As_face*(d - h/2)) / 1e6
+        Pn = Cc / 1000
+        Mn = (Cc * (h/2 - a/2)) / 1e6
         
-        phi = get_phi(eps_s_bot)
-        results.append({"c": c, "Pn": Pn, "Mn": Mn, "phiPn": Pn*phi, "phiMn": Mn*phi, "eps_t": eps_s_bot, "phi": phi})
-    
-    # Pure Tension Point
-    Pn_tension = - (2 * As_face * fy) / 1000
-    results.append({"c": 0, "Pn": Pn_tension, "Mn": 0, "phiPn": Pn_tension * 0.9, "phiMn": 0, "eps_t": 0.1, "phi": 0.9})
-    
-    return pd.DataFrame(results)
+        for _, bar in rebar_df.iterrows():
+            eps_s = ecu * (c - (h - bar['y'])) / c # Strain relative to top fiber
+            fs = np.clip(eps_s * Es, -fy, fy)
+            force = (fs * bar['area']) / 1000
+            Pn += force
+            Mn += (force * (bar['y'] - h/2)) / 1e6
+            
+        results.append({'Pn': Pn, 'Mn': abs(Mn)})
+        
+    # Add pure tension point
+    results.append({'Pn': -(total_as * fy) / 1000, 'Mn': 0})
+    return pd.DataFrame(results).sort_values('Pn', ascending=False)
 
-df = generate_pm_data()
+pm_df = calculate_pm()
 
-# --- Tabs Implementation ---
-tab1, tab2, tab3 = st.tabs(["📊 Interaction Diagram", "📐 Calculation Report", "🖼️ Section Detail"])
+# --- Visualization Tabs ---
+tab1, tab2 = st.tabs(["📊 Interaction Diagram", "🖼️ Section Detail"])
 
 with tab1:
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Max Pn (Nominal)", f"{round(df['Pn'].max())} kN")
-    col2.metric("Max Mn (Nominal)", f"{round(df['Mn'].max())} kNm")
-    col3.metric("Pure Tension (φTn)", f"{round(df['phiPn'].min())} kN")
-
     fig_pm = go.Figure()
-    # Add Shaded Safety Area
-    fig_pm.add_trace(go.Scatter(x=df['phiMn'], y=df['phiPn'], fill='toself', fillcolor='rgba(31, 119, 180, 0.2)', line=dict(color='#1f77b4', width=3), name='Design Capacity (φPn, φMn)'))
-    # Add Nominal Curve
-    fig_pm.add_trace(go.Scatter(x=df['Mn'], y=df['Pn'], line=dict(color='gray', dash='dash'), name='Nominal Capacity (Pn, Mn)'))
-    
-    fig_pm.update_layout(
-        xaxis_title="Bending Moment (kNm)", yaxis_title="Axial Load (kN)",
-        hovermode="x unified", height=600, template="none",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    # Highlight Axis Lines
-    fig_pm.add_hline(y=0, line_color="black", line_width=1)
-    fig_pm.add_vline(x=0, line_color="black", line_width=1)
+    fig_pm.add_trace(go.Scatter(x=pm_df['Mn'], y=pm_df['Pn'], fill='toself', name='Nominal Capacity'))
+    fig_pm.update_layout(xaxis_title="Moment (kNm)", yaxis_title="Axial (kN)", template="none")
     st.plotly_chart(fig_pm, use_container_width=True)
 
 with tab2:
-    st.header("ACI 318-19 Design Strength Verification")
-    st.write("The diagram is generated by iterating through neutral axis depths ($c$) to satisfy strain compatibility.")
-    
-    st.subheader("Key Design Formulas")
-    st.latex(r"P_n = 0.85 f'_c a b + \sum A_{si} f_{si}")
-    st.latex(r"M_n = P_n \cdot e = \sum F_i (y_{centroid} - y_i)")
-    st.latex(r"\phi = \text{Variable based on net tensile strain } \epsilon_t")
-    
-    st.divider()
-    st.subheader("Point-by-Point Data")
-    st.dataframe(df.style.background_gradient(subset=['phi'], cmap='Blues'), use_container_width=True)
-
-with tab3:
-    st.header("Reinforcement Layout")
-    
-    # Create the section visualization
     fig_sec = go.Figure()
-    # Concrete Rectangle
-    fig_sec.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=4), fillcolor="#d3d3d3")
+    # Draw Section
+    fig_sec.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=3), fillcolor="rgba(200,200,200,0.3)")
+    # Draw Bars
+    for b_type in rebar_df['type'].unique():
+        subset = rebar_df[rebar_df['type'] == b_type]
+        fig_sec.add_trace(go.Scatter(
+            x=subset['x'], y=subset['y'], mode='markers',
+            marker=dict(size=subset['dia'], line=dict(width=1, color='black')),
+            name=b_type
+        ))
     
-    # Rebar positions
-    x_rebar = np.linspace(cover + bar_dia/2, b - (cover + bar_dia/2), n_bars)
-    y_bot = cover + bar_dia/2
-    y_top = h - (cover + bar_dia/2)
-    
-    # Draw bars
-    fig_sec.add_trace(go.Scatter(x=x_rebar, y=[y_bot]*n_bars, mode='markers', marker=dict(size=bar_dia, color='#cc0000', line=dict(width=2, color='black')), name='Tension Steel'))
-    fig_sec.add_trace(go.Scatter(x=x_rebar, y=[y_top]*n_bars, mode='markers', marker=dict(size=bar_dia, color='#0000cc', line=dict(width=2, color='black')), name='Compression Steel'))
-
     fig_sec.update_layout(
-        xaxis=dict(title="Width (mm)", range=[-b*0.2, b*1.2], gridcolor='lightgrey'),
-        yaxis=dict(title="Depth (mm)", range=[-h*0.2, h*1.2], gridcolor='lightgrey', scaleanchor="x", scaleratio=1),
-        width=500, height=600, template="none", showlegend=True
+        xaxis=dict(range=[-50, b+50], title="Width (mm)"),
+        yaxis=dict(range=[-50, h+50], title="Depth (mm)", scaleanchor="x", scaleratio=1),
+        width=600, height=700, template="none"
     )
     st.plotly_chart(fig_sec)
+
+st.metric("Total Steel Area (As)", f"{round(total_as, 2)} mm²")
