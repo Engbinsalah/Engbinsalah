@@ -107,33 +107,44 @@ pm_df = calculate_pm()
 tab1, tab2 = st.tabs(["📊 Interaction Diagram & Calcs", "🖼️ Section Detail"])
 
 with tab1:
+    # 1. The Plot
     fig_pm = go.Figure()
-    fig_pm.add_trace(go.Scatter(x=pm_df['Mn'], y=pm_df['Pn'], fill='toself', fillcolor='rgba(31,119,180,0.1)', line=dict(color='#1f77b4', width=3), name='Nominal Capacity'))
-    fig_pm.update_layout(xaxis_title="Moment Mn (kNm)", yaxis_title="Axial Pn (kN)", template="none", height=600)
+    fig_pm.add_trace(go.Scatter(x=pm_df['Mn'], y=pm_df['Pn'], fill='toself', 
+                                fillcolor='rgba(31,119,180,0.1)', 
+                                line=dict(color='#1f77b4', width=3), 
+                                name='Nominal Capacity'))
+    fig_pm.update_layout(xaxis_title="Moment Mn (kNm)", yaxis_title="Axial Pn (kN)", 
+                         template="none", height=600)
     st.plotly_chart(fig_pm, use_container_width=True)
 
+    # 2. The Equations Section
     st.divider()
-    st.subheader("📑 Detailed Engineering Calculations")
+    st.header("📐 Governing Design Equations")
+    st.info("The following equations are solved iteratively for varying Neutral Axis depths (c).")
+
+    col_eq1, col_eq2 = st.columns(2)
     
-    with st.expander("View Formulas & Sample Calculation"):
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.write("**Material & Section Properties:**")
-            st.latex(rf"f'_c = {fc} \text{{ MPa}}, \quad \beta_1 = {round(beta1, 3)}")
-            st.latex(rf"A_{{s, total}} = {round(total_as, 1)} \text{{ mm}}^2")
-        with col_c2:
-            st.write("**Governing Equations:**")
-            st.latex(r"P_n = 0.85 f'_c a b + \sum A_{si} f_{si}")
-            st.latex(r"M_n = \sum F_i (y_i - y_{centroid})")
-            
+    with col_eq1:
+        st.subheader("Force Equilibrium")
+        st.write("Concrete Compression Force ($C_c$):")
+        st.latex(r"C_c = 0.85 \cdot f'_c \cdot a \cdot b \quad \text{where } a = \beta_1 c")
+        
+        st.write("Steel Stress ($f_{si}$) for each layer $i$:")
+        st.latex(r"\epsilon_{si} = 0.003 \frac{c - d_i}{c}")
+        st.latex(r"f_{si} = \text{sign}(\epsilon_{si}) \cdot \min(|E_s \epsilon_{si}|, f_y)")
+        
+        st.write("Total Axial Nominal Strength ($P_n$):")
+        st.latex(r"P_n = C_c + \sum_{i=1}^{n} (A_{si} \cdot f_{si})")
+
+    with col_eq2:
+        st.subheader("Moment Equilibrium")
+        st.write("Moment about Plastic Centroid ($M_n$):")
+        st.latex(r"M_n = C_c \left( \frac{h}{2} - \frac{a}{2} \right) + \sum_{i=1}^{n} \left[ A_{si} f_{si} \left( \frac{h}{2} - d_i \right) \right]")
+        
         st.divider()
-        d_eff = h - cover # Approx effective depth for balanced point
-        c_bal = (ecu / (ecu + (fy/Es))) * d_eff
-        st.write(f"**Balanced Neutral Axis ($c_{{bal}}$):** approx {round(c_bal, 2)} mm")
-
-    st.write("**Data Table:**")
-    st.dataframe(pm_df[['Pn', 'Mn']].rename(columns={'Pn': 'Axial (kN)', 'Mn': 'Moment (kNm)'}), use_container_width=True)
-
+        st.subheader("Limits")
+        st.write("Pure Tension Point ($T_n$):")
+        st.latex(r"P_{nt} = - \sum (A_{si} \cdot f_y), \quad M_{nt} = 0")
 with tab2:
     fig_sec = go.Figure()
     fig_sec.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=3), fillcolor="rgba(200,200,200,0.3)")
