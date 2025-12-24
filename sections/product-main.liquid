@@ -1,0 +1,91 @@
+<section class="product-page">
+  <div class="product-gallery">
+    {% if product.images.size > 0 %}
+      {% for image in product.images %}
+        <figure class="gallery-image">{{ image | image_url: width: 900 | image_tag: product.title }}</figure>
+      {% endfor %}
+    {% else %}
+      <div class="image-placeholder">Add product images</div>
+    {% endif %}
+  </div>
+  <div class="product-summary">
+    <p class="pill">{{ product.vendor }}</p>
+    <h1>{{ product.title }}</h1>
+    <p class="price">{{ product.price | money }}{% if product.compare_at_price > product.price %} <span class="compare">{{ product.compare_at_price | money }}</span>{% endif %}</p>
+    <p class="rating">★★★★★ {{ section.settings.review_label }}</p>
+
+    {% if product.variants.size > 1 %}
+      <label for="ProductSelect">Variant</label>
+      <select id="ProductSelect" name="id">
+        {% for variant in product.variants %}
+          <option value="{{ variant.id }}" {% if variant == product.selected_or_first_available_variant %}selected{% endif %}>{{ variant.title }} - {{ variant.price | money }}</option>
+        {% endfor %}
+      </select>
+    {% else %}
+      <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+    {% endif %}
+
+    <div class="purchase-actions">
+      <form method="post" action="/cart/add" id="AddToCartForm">
+        <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+        <button type="submit" class="button primary sticky-add">Add to cart</button>
+      </form>
+      <button class="button ghost" data-wishlist>Add to wishlist</button>
+      <button class="button ghost" data-compare>Add to compare</button>
+    </div>
+
+    <div class="policy-grid">
+      <div class="policy">🚚 Fast shipping</div>
+      <div class="policy">↩️ 30-day returns</div>
+      <div class="policy">🔒 Secure checkout</div>
+    </div>
+
+    <div class="tabs">
+      <details open>
+        <summary>Details</summary>
+        <div>{{ product.description }}</div>
+      </details>
+      <details>
+        <summary>Specifications</summary>
+        <div>{{ section.settings.specs }}</div>
+      </details>
+      <details>
+        <summary>Shipping & returns</summary>
+        <div>{{ section.settings.shipping }}</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="section cross-sell">
+  <div class="section-header">
+    <h2>{{ section.settings.cross_heading }}</h2>
+  </div>
+  <div class="product-grid">
+    {% for product in collections[section.settings.cross_collection].products limit: 4 %}
+      <article class="product-card">
+        <a href="{{ product.url }}" class="product-image">{{ product.featured_image | image_url: width: 360 | image_tag: product.title }}</a>
+        <div class="product-info">
+          <h3><a href="{{ product.url }}">{{ product.title }}</a></h3>
+          <p class="price">{{ product.price | money }}</p>
+        </div>
+      </article>
+    {% else %}
+      <div class="placeholder">Assign a collection for cross-sell products.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Product main",
+  "settings": [
+    {"type": "text", "id": "review_label", "label": "Review label", "default": "4.9 (2k reviews)"},
+    {"type": "textarea", "id": "specs", "label": "Specifications", "default": "Stainless steel blades, BPA-free, dishwasher-safe."},
+    {"type": "textarea", "id": "shipping", "label": "Shipping & returns", "default": "Ships in 1-2 business days. Free returns within 30 days."},
+    {"type": "collection", "id": "cross_collection", "label": "Cross-sell collection"},
+    {"type": "text", "id": "cross_heading", "label": "Cross-sell heading", "default": "You may also like"}
+  ],
+  "presets": [{"name": "Product main", "category": "Product"}]
+}
+{% endschema %}

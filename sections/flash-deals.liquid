@@ -1,0 +1,64 @@
+<section class="section flash-sale">
+  <div class="section-header">
+    <div>
+      <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+      <h2>{{ section.settings.heading }}</h2>
+      <p class="lede">{{ section.settings.subheading }}</p>
+    </div>
+    <div class="countdown" data-countdown="{{ section.settings.end_date }}"></div>
+  </div>
+  <div class="product-grid">
+    {% for block in section.blocks %}
+      {% assign product = all_products[block.settings.product] %}
+      <article class="product-card flash" data-product-id="{{ product.id }}">
+        <div class="badge">Flash Deal</div>
+        <a href="{{ product.url }}" class="product-image">
+          {% if product.featured_image %}
+            {{ product.featured_image | image_url: width: 480 | image_tag: product.title }}
+          {% else %}
+            <div class="image-placeholder">Upload product</div>
+          {% endif %}
+        </a>
+        <div class="product-info">
+          <h3><a href="{{ product.url }}">{{ product.title | default: 'Product' }}</a></h3>
+          <p class="price">{{ product.compare_at_price | money }} <span class="current">{{ product.price | money }}</span></p>
+          <p class="pill">{{ block.settings.badge }}</p>
+          <div class="progress"><span style="width: {{ block.settings.sell_out }}%"></span></div>
+          <div class="product-actions">
+            <form method="post" action="/cart/add">
+              <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+              <button type="submit" class="button primary">Add to cart</button>
+            </form>
+            <button type="button" class="button ghost" data-compare>Add to compare</button>
+          </div>
+        </div>
+      </article>
+    {% else %}
+      <div class="placeholder">Add flash deal blocks to highlight limited-time offers.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Flash deals",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Flash Sale"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "Limited-time offers"},
+    {"type": "textarea", "id": "subheading", "label": "Subheading", "default": "Hurry—best prices before the clock runs out."},
+    {"type": "text", "id": "end_date", "label": "Countdown end (YYYY-MM-DDTHH:MM:SS)", "default": "2025-01-01T00:00:00"}
+  ],
+  "blocks": [
+    {
+      "type": "deal",
+      "name": "Deal",
+      "settings": [
+        {"type": "product", "id": "product", "label": "Product"},
+        {"type": "text", "id": "badge", "label": "Badge", "default": "Up to 60%"},
+        {"type": "range", "id": "sell_out", "min": 0, "max": 100, "default": 70, "label": "Sell out percent"}
+      ]
+    }
+  ],
+  "presets": [{"name": "Flash deals", "category": "Promotional"}]
+}
+{% endschema %}

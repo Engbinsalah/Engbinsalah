@@ -1,0 +1,41 @@
+<section class="section collection">
+  <div class="section-header">
+    <h1>{{ collection.title }}</h1>
+    <p class="lede">{{ collection.description }}</p>
+  </div>
+  <div class="filters">
+    <label>Sort by
+      <select name="sort_by" onchange="this.form.submit()">
+        {% for option in collection.sort_options %}
+          <option value="{{ option.value }}" {% if option.value == collection.sort_by %}selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="product-grid">
+    {% for product in collection.products %}
+      <article class="product-card">
+        <a href="{{ product.url }}" class="product-image">{{ product.featured_image | image_url: width: 480 | image_tag: product.title }}</a>
+        <div class="product-info">
+          <h3><a href="{{ product.url }}">{{ product.title }}</a></h3>
+          <p class="price">{{ product.price | money }}</p>
+          <p class="pill">{{ product.tags | join: ', ' }}</p>
+          <form method="post" action="/cart/add">
+            <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+            <button type="submit" class="button primary">Add to cart</button>
+          </form>
+        </div>
+      </article>
+    {% else %}
+      <div class="placeholder">No products found in this collection.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Collection grid",
+  "settings": [],
+  "presets": [{"name": "Collection grid", "category": "Collection"}]
+}
+{% endschema %}
