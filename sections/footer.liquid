@@ -1,0 +1,28 @@
+<div class="footer-grid">
+  <div>
+    <h3>{{ settings.footer_heading | default: 'Amrend Life' }}</h3>
+    <p>{{ settings.footer_subheading | default: 'Smart tools for modern homes.' }}</p>
+    <div class="social-links">
+      <a href="{{ settings.social_facebook }}" aria-label="Facebook">Facebook</a>
+      <a href="{{ settings.social_instagram }}" aria-label="Instagram">Instagram</a>
+      <a href="{{ settings.social_youtube }}" aria-label="YouTube">YouTube</a>
+    </div>
+  </div>
+  <div>
+    <h4>Quick Links</h4>
+    <ul>
+      <li><a href="/collections/all">Shop All</a></li>
+      <li><a href="/pages/about">About</a></li>
+      <li><a href="/blogs/news">Blog</a></li>
+    </ul>
+  </div>
+  <div>
+    <h4>Support</h4>
+    <ul>
+      <li><a href="/pages/contact">Contact</a></li>
+      <li><a href="/policies/shipping-policy">Shipping</a></li>
+      <li><a href="/policies/refund-policy">Returns</a></li>
+    </ul>
+  </div>
+</div>
+<p class="footer-meta">© {{ 'now' | date: '%Y' }} {{ shop.name }}. All rights reserved.</p>

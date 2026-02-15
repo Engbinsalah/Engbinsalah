@@ -1,0 +1,43 @@
+<section class="section trending">
+  <div class="section-header">
+    <div>
+      <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+      <h2>{{ section.settings.heading }}</h2>
+    </div>
+    <div class="carousel-controls" aria-label="Carousel controls">
+      <button type="button" class="icon-button" data-carousel-prev>‹</button>
+      <button type="button" class="icon-button" data-carousel-next>›</button>
+    </div>
+  </div>
+  <div class="carousel" data-carousel>
+    {% for product in collections[section.settings.collection].products limit: section.settings.limit %}
+      <article class="product-card" data-product-id="{{ product.id }}">
+        <div class="badge">Trending</div>
+        <a href="{{ product.url }}" class="product-image">
+          {{ product.featured_image | image_url: width: 360 | image_tag: product.title }}
+        </a>
+        <div class="product-info">
+          <h3><a href="{{ product.url }}">{{ product.title }}</a></h3>
+          <p class="price">{{ product.price | money }}</p>
+          <p class="pill">{{ section.settings.pill_label }}</p>
+        </div>
+      </article>
+    {% else %}
+      <div class="placeholder">Select a collection to activate trending products.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Trending products",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Trending"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "Hot this week"},
+    {"type": "collection", "id": "collection", "label": "Collection"},
+    {"type": "range", "id": "limit", "label": "Products", "min": 3, "max": 12, "step": 1, "default": 6},
+    {"type": "text", "id": "pill_label", "label": "Pill label", "default": "1k+ bought"}
+  ],
+  "presets": [{"name": "Trending products", "category": "Products"}]
+}
+{% endschema %}

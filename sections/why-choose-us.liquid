@@ -1,0 +1,41 @@
+<section class="section why-us">
+  <div class="section-header">
+    <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+    <h2>{{ section.settings.heading }}</h2>
+    <p class="lede">{{ section.settings.subheading }}</p>
+  </div>
+  <div class="feature-grid">
+    {% for block in section.blocks %}
+      <div class="feature-card">
+        <div class="icon-circle">{{ block.settings.icon }}</div>
+        <h3>{{ block.settings.title }}</h3>
+        <p>{{ block.settings.text }}</p>
+      </div>
+    {% else %}
+      <div class="placeholder">Add value props to showcase brand trust.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Why choose us",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Why Choose Us"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "Built for everyday life"},
+    {"type": "textarea", "id": "subheading", "label": "Subheading", "default": "Fast shipping, 30-day returns, and responsive support."}
+  ],
+  "blocks": [
+    {
+      "type": "feature",
+      "name": "Feature",
+      "settings": [
+        {"type": "text", "id": "icon", "label": "Icon", "default": "🚚"},
+        {"type": "text", "id": "title", "label": "Title", "default": "Fast, free shipping"},
+        {"type": "textarea", "id": "text", "label": "Text", "default": "On orders over $50 within contiguous US."}
+      ]
+    }
+  ],
+  "presets": [{"name": "Why choose us", "category": "Text"}]
+}
+{% endschema %}

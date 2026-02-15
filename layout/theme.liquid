@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title | escape }} - {{ shop.name }}</title>
+  <meta name="description" content="{{ shop.meta_description | escape }}">
+  {{ 'stylesheet.css' | asset_url | stylesheet_tag }}
+  {{ 'theme.js' | asset_url | script_tag }}
+  {{ content_for_header }}
+</head>
+<body class="amrend-theme">
+  <a class="skip-link" href="#MainContent">Skip to content</a>
+  <header class="site-header">
+    {% section 'header' %}
+  </header>
+  <main id="MainContent" role="main">
+    {{ content_for_layout }}
+  </main>
+  <footer class="site-footer">
+    {% section 'footer' %}
+  </footer>
+</body>
+</html>
