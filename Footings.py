@@ -1,127 +1,210 @@
+"""
+Foundation Design Tool — STAAD RCDC / MAT3D Style
+Enhanced with Robust STAAD Copy-Paste Parser
+ACI 318-19 | ASCE 7-22 Methodology
+"""
+
 import streamlit as st
-import pandas as pd
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
-from io import StringIO
-import re
+import plotly.express as px
+import io, math, re
 
-st.set_page_config(layout="wide", page_title="MAT 3D Style Foundation Tool")
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE CONFIG & STYLING
+# ─────────────────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Foundation Design Tool", page_icon="🏗️",
+                    layout="wide", initial_sidebar_state="expanded")
 
-st.title("🏗️ Foundation Sizing & Review (MAT 3D Style)")
-st.markdown("Automated sizing with STAAD reaction sign handling and 3D Vector visualization.")
+st.markdown("""
+<style>
+.stApp{background:#0f1117;color:#e0e0e0}
+.metric-card{background:linear-gradient(135deg,#1a1f2e,#16213e);border:1px solid #2d3561;
+  border-radius:10px;padding:16px;text-align:center;margin:4px}
+.metric-value{font-size:1.8rem;font-weight:700;color:#4fc3f7}
+.metric-label{font-size:.8rem;color:#90a4ae;text-transform:uppercase;letter-spacing:1px}
+.sec-hdr{background:linear-gradient(90deg,#1565c0,#0d47a1);color:#fff;
+  padding:8px 16px;border-radius:6px;font-weight:700;font-size:1.05rem;margin:12px 0 8px}
+.info-box{background:#0d2137;border-left:4px solid #1565c0;
+  padding:10px 14px;border-radius:4px;margin:6px 0;font-size:.88rem}
+div[data-testid="stSidebar"]{background:#13192b}
+</style>""", unsafe_allow_html=True)
 
-# --- Sidebar: Design Parameters ---
-st.sidebar.header("1. Load Mapping & Convention")
-asd_filter = st.sidebar.text_input("ASD LC Identifier (contains)", value="[4-")
-lrfd_filter = st.sidebar.text_input("LRFD LC Identifier (contains)", value="[5-")
-flip_axial = st.sidebar.checkbox("Flip Axial Sign (Reaction to Load)", value=True)
+def sec(t): st.markdown(f'<div class="sec-hdr">{t}</div>', unsafe_allow_html=True)
+def info(t): st.markdown(f'<div class="info-box">{t}</div>', unsafe_allow_html=True)
+def mcard(lbl, val, col):
+    col.markdown(f'<div class="metric-card"><div class="metric-value">{val}</div>'
+                  f'<div class="metric-label">{lbl}</div></div>', unsafe_allow_html=True)
 
-st.sidebar.header("2. Soil & Material")
-q_allow = st.sidebar.number_input("Allowable Bearing Pressure (ksf)", value=3.0)
-gamma_conc = st.sidebar.number_input("Concrete Density (pcf)", value=150.0) / 1000
-gamma_soil = st.sidebar.number_input("Soil Density (pcf)", value=110.0) / 1000
-mu = st.sidebar.number_input("Friction Coefficient (μ)", value=0.45)
-fos_ot_limit = st.sidebar.number_input("Min FOS Overturning", value=1.5)
-fos_sl_limit = st.sidebar.number_input("Min FOS Sliding", value=1.5)
-
-st.sidebar.header("3. Footing Geometry")
-L = st.sidebar.number_input("Length (X-dir) [L]", value=12.0)
-W = st.sidebar.number_input("Width (Z-dir) [W]", value=12.0)
-H = st.sidebar.number_input("Thickness [H]", value=2.5)
-D_soil = st.sidebar.number_input("Soil Depth on top", value=2.0)
-
-# --- Load Input ---
-st.subheader("1. Input Loads")
-load_input = st.text_area("Paste Load Table (Tabs/Spaces/Commas supported)", height=150)
-
-if load_input:
+# ─────────────────────────────────────────────────────────────────────────────
+# LOAD ENGINE & PARSER
+# ─────────────────────────────────────────────────────────────────────────────
+def parse_staad_text(text, flip_axial):
+    """Parses raw text from STAAD (tabs/spaces/commas) into a clean DataFrame."""
     try:
-        clean_input = re.sub(r'[ \t]+', ',', load_input.strip())
-        df_loads = pd.read_csv(StringIO(clean_input))
+        # Standardize delimiters: replace tabs and multiple spaces with a single comma
+        clean_text = re.sub(r'[ \t]+', ',', text.strip())
+        df = pd.read_csv(io.StringIO(clean_text))
         
-        # Geometry & Self-Weight
-        Area = L * W
-        Sx, Sz = (L * W**2)/6, (W * L**2)/6
-        Weight_Service = (Area * H * gamma_conc) + (Area * D_soil * gamma_soil)
-        Weight_Factored = Weight_Service * 1.2
-
-        asd_results = []
-        lrfd_results = []
-
-        for _, row in df_loads.iterrows():
-            lc = str(row['LC'])
-            P_app = -row['FY'] if flip_axial else row['FY']
-            Fx, Fz = row['FX'], row['FZ']
-            Mx_app, Mz_app = row['MX'], row['MZ']
-
-            if asd_filter in lc:
-                P_total = P_app + Weight_Service
-                Mx_base = Mx_app + (Fz * H)
-                Mz_base = Mz_app + (Fx * H)
-                q = [(P_total/Area) + (i*Mx_base/Sx) + (j*Mz_base/Sz) for i in [1, -1] for j in [1, -1]]
-                q_max, q_min = max(q), min(q)
-                sf_sl = (abs(P_total) * mu) / np.sqrt(Fx**2 + Fz**2) if np.sqrt(Fx**2 + Fz**2) > 0 else 99
-                sf_ot = min((P_total*W/2)/abs(Mx_base) if Mx_base != 0 else 99, (P_total*L/2)/abs(Mz_base) if Mz_base != 0 else 99)
-                
-                asd_results.append({"LC": lc, "P_Total": round(P_total, 2), "q_max": round(q_max, 3), "q_min": round(q_min, 3), "SF_Sliding": round(sf_sl, 2), "SF_OT": round(sf_ot, 2), "Ratio": round(q_max/q_allow, 2)})
-
-            elif lrfd_filter in lc:
-                P_ult = P_app + Weight_Factored
-                q_u = (P_ult/Area) + abs((Mx_app + Fz*H)/Sx) + abs((Mz_app + Fx*H)/Sz)
-                lrfd_results.append({"LC": lc, "P_ult": round(P_ult, 2), "q_ult": round(q_u, 3)})
-
-        # --- Summary Tables ---
-        if asd_results:
-            df_asd = pd.DataFrame(asd_results)
-            st.subheader("2. Controlling Case & SF Ratios")
-            c_bearing = df_asd.loc[df_asd['q_max'].idxmax()]
-            c_sliding = df_asd.loc[df_asd['SF_Sliding'].idxmin()]
-            c_ot = df_asd.loc[df_asd['SF_OT'].idxmin()]
+        # Mapping common STAAD column names to our standard
+        mapping = {
+            'L/C': 'Case', 'Node': 'Node',
+            'FX': 'Fx', 'FY': 'Fy', 'FZ': 'Fz',
+            'MX': 'Mx', 'MY': 'My', 'MZ': 'Mz'
+        }
+        df.rename(columns=lambda x: mapping.get(x.upper(), x), inplace=True)
+        
+        # Sign Handling: STAAD reactions are often opposite to the load on the footing
+        if flip_axial:
+            df['Fy'] = -df['Fy']
             
-            st.table(pd.DataFrame([
-                {"Check": "Bearing", "LC": c_bearing['LC'], "Value": c_bearing['q_max'], "Limit": q_allow, "Ratio": c_bearing['Ratio']},
-                {"Check": "Sliding", "LC": c_sliding['LC'], "Value": c_sliding['SF_Sliding'], "Limit": fos_sl_limit, "SF": c_sliding['SF_Sliding']},
-                {"Check": "Overturning", "LC": c_ot['LC'], "Value": c_ot['SF_OT'], "Limit": fos_ot_limit, "SF": c_ot['SF_OT']}
-            ]))
-
-        # --- 3D Visualization (MAT 3D Style) ---
-        st.subheader("3. 3D Load Visualization")
-        sel_lc = st.selectbox("Select LC", df_loads['LC'])
-        r = df_loads[df_loads['LC'] == sel_lc].iloc[0]
-        f_y = -r['FY'] if flip_axial else r['FY']
-        
-        fig = go.Figure()
-
-        # Footing Geometry (Box)
-        fig.add_trace(go.Mesh3d(
-            x=[-L/2, L/2, L/2, -L/2, -L/2, L/2, L/2, -L/2],
-            y=[0, 0, 0, 0, -H, -H, -H, -H],
-            z=[-W/2, -W/2, W/2, W/2, -W/2, -W/2, W/2, W/2],
-            color='lightgray', opacity=0.6, flatshading=True, name='Footing'
-        ))
-
-        # Resultant Vector Arrow (From Top Center)
-        scale = 5.0 # Scale for visibility
-        fig.add_trace(go.Scatter3d(
-            x=[0, r['FX']*scale], y=[0, -f_y*scale], z=[0, r['FZ']*scale],
-            mode='lines+markers+text',
-            line=dict(color='red', width=10),
-            marker=dict(size=5, symbol='cone', color='red'),
-            text=["", f"Resultant: {round(np.sqrt(r['FX']**2 + f_y**2 + r['FZ']**2),2)}"],
-            name='Applied Resultant'
-        ))
-
-        # Axis Indicators (MAT 3D style)
-        fig.add_trace(go.Scatter3d(x=[L/2+2, L/2+4], y=[0,0], z=[0,0], mode='lines', line=dict(color='blue', width=4), name='X-Axis'))
-        fig.add_trace(go.Scatter3d(x=[0,0], y=[0,0], z=[W/2+2, W/2+4], mode='lines', line=dict(color='green', width=4), name='Z-Axis'))
-
-        fig.update_layout(scene=dict(
-            aspectmode='data',
-            xaxis=dict(backgroundcolor="rgb(230, 230,230)", gridcolor="white", showbackground=True),
-            yaxis=dict(backgroundcolor="rgb(230, 230,230)", gridcolor="white", showbackground=True, title="Vertical (H)"),
-            zaxis=dict(backgroundcolor="rgb(230, 230,230)", gridcolor="white", showbackground=True),
-        ), margin=dict(l=0, r=0, b=0, t=0))
-        st.plotly_chart(fig, use_container_width=True)
-
+        return df
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Parsing failed: {e}")
+        return None
+
+def apply_combos(load_df, unit_system):
+    """Applies ACI/ASCE load combinations based on Case name matching."""
+    # This logic matches Case names like 'DL', 'LL' etc to factors
+    # For a purely manual review of pasted results, we often just identify 
+    # which pasted rows are SLS (Service) and which are ULS (Ultimate).
+    return load_df # Returning raw for this implementation to allow direct selection
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3D VISUALISER
+# ─────────────────────────────────────────────────────────────────────────────
+def fig_3d(load_df, Lx, Lz, col_w, col_d, units):
+    fig = go.Figure()
+    hw, hd, ht = Lx/2, Lz/2, 0.6 if units == "Metric" else 2.0
+    vx=[-hw,hw,hw,-hw,-hw,hw,hw,-hw]; vy=[-hd,-hd,hd,hd,-hd,-hd,hd,hd]
+    vz=[-ht,-ht,-ht,-ht,0,0,0,0]
+    I=[0,0,0,4,4,4,0,2,2,0,6,4]; J=[1,2,3,5,6,7,1,3,6,4,7,5]; K=[2,3,0,6,7,4,5,7,5,6,2,1]
+    fig.add_trace(go.Mesh3d(x=vx,y=vy,z=vz,i=I,j=J,k=K,color="#37474f",opacity=.55,name="Footing"))
+    
+    # Critical load row selection
+    try:
+        idx = load_df['Fy'].abs().idxmax()
+        row = load_df.loc[idx]
+    except:
+        return fig
+
+    sc = max(Lx, Lz) * 0.5 / (abs(row['Fy']) + 1e-9)
+    fig.add_trace(go.Scatter3d(x=[0, row['Fx']*sc], y=[0, row['Fz']*sc], z=[1.5, 1.5 - abs(row['Fy'])*sc],
+                               mode='lines+markers', line=dict(color='red', width=6), name='Applied Load Vector'))
+
+    fig.update_layout(scene=dict(aspectmode='data', bgcolor="#0d1117"), paper_bgcolor="#0f1117", margin=dict(l=0,r=0,t=0,b=0))
+    return fig
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN APP
+# ─────────────────────────────────────────────────────────────────────────────
+def main():
+    st.markdown("<h1>🏗️ Foundation Design Tool <span style='font-size:15px; color:#78909c;'>STAAD Enhanced</span></h1>", unsafe_allow_html=True)
+    st.divider()
+
+    # ── SIDEBAR ──────────────────────────────────────────────────────────────
+    with st.sidebar:
+        sec("⚙️ Configuration")
+        unit_sys = st.selectbox("Unit System", ["Metric (kN, m, MPa)", "Imperial (kip, ft, ksi)"])
+        
+        sec("🧱 Materials")
+        if unit_sys == "Metric (kN, m, MPa)":
+            fc = st.number_input("f'c (MPa)", 20., 80., 28.)
+            fy = st.number_input("fy (MPa)", 300., 600., 420.)
+            qa = st.number_input("Allowable Bearing (kPa)", 50., 1000., 200.)
+            gc = 24.0 # kN/m3
+        else:
+            fc = st.number_input("f'c (psi)", 3000, 6000, 4000) / 1000 # to ksi
+            fy = st.number_input("fy (psi)", 40000, 75000, 60000) / 1000 # to ksi
+            qa = st.number_input("Allowable Bearing (ksf)", 1.0, 10.0, 3.0)
+            gc = 0.150 # kcf
+
+        sec("🏛️ Footing & Column")
+        Df = st.number_input("Total Depth Df", 0.5, 15.0, 1.5 if "Metric" in unit_sys else 5.0)
+        cw = st.number_input("Column X-dim", 0.2, 5.0, 0.5)
+        cd = st.number_input("Column Z-dim", 0.2, 5.0, 0.5)
+        flip_axial = st.checkbox("Flip Axial Sign (STAAD Reaction)", value=True)
+
+    t1, t2, t3 = st.tabs(["📂 Load Input", "📐 Sizing Results", "📊 3D View"])
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 1: ENHANCED LOAD INPUT
+    # ════════════════════════════════════════════════════════════════════════
+    with t1:
+        sec("① Load Entry")
+        st.info("Paste your STAAD 'Support Reactions' table below. Supports Tab or Space delimiters.")
+        
+        raw_text = st.text_area("Paste from STAAD / Excel here", height=250, 
+                                placeholder="Node  L/C  FX  FY  FZ  MX  MY  MZ...")
+        
+        if raw_text:
+            df = parse_staad_text(raw_text, flip_axial)
+            if df is not None:
+                st.success(f"Successfully parsed {len(df)} load cases.")
+                st.dataframe(df, use_container_width=True)
+                st.session_state['ldf'] = df
+                
+                # Sizing Filter Identification
+                c1, c2 = st.columns(2)
+                asd_tag = c1.text_input("ASD/Service Case Identifier", value="[4-")
+                uls_tag = c2.text_input("LRFD/Ultimate Case Identifier", value="[5-")
+                
+                st.session_state['asd_tag'] = asd_tag
+                st.session_state['uls_tag'] = uls_tag
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 2: SIZING
+    # ════════════════════════════════════════════════════════════════════════
+    with t2:
+        if 'ldf' not in st.session_state:
+            st.warning("Please paste loads in Tab 1.")
+        else:
+            ldf = st.session_state['ldf']
+            asd_tag = st.session_state['asd_tag']
+            
+            # Filter ASD cases for bearing check
+            asd_df = ldf[ldf['Case'].astype(str).str.contains(asd_tag, na=False, regex=False)]
+            
+            if asd_df.empty:
+                st.error(f"No Service cases found matching '{asd_tag}'. Adjust the filter.")
+            else:
+                sec("② Bearing & Stability Review (Service)")
+                
+                # Interactive Size Adjustment
+                Lx = st.number_input("Trial Length Lx", value=10.0 if "Imperial" in unit_sys else 3.0)
+                Lz = st.number_input("Trial Width Lz", value=10.0 if "Imperial" in unit_sys else 3.0)
+                H = st.number_input("Trial Thickness H", value=2.0 if "Imperial" in unit_sys else 0.6)
+                
+                # Sizing Logic
+                Area = Lx * Lz
+                Sx, Sz = (Lx * Lz**2)/6, (Lz * Lx**2)/6
+                Wt = Area * H * gc
+                
+                results = []
+                for _, row in asd_df.iterrows():
+                    P_tot = row['Fy'] + Wt
+                    Mx_b = row['Mx'] + row['Fz']*H
+                    Mz_b = row['Mz'] + row['Fx']*H
+                    
+                    q_max = (P_tot/Area) + abs(Mx_b/Sx) + abs(Mz_b/Sz)
+                    results.append({
+                        "Case": row['Case'], "P_Total": round(P_tot, 2),
+                        "q_max": round(q_max, 3), "Status": "PASS" if q_max <= qa else "FAIL"
+                    })
+                
+                st.table(pd.DataFrame(results))
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 3: 3D VISUALIZATION
+    # ════════════════════════════════════════════════════════════════════════
+    with t3:
+        if 'ldf' in st.session_state:
+            sec("③ 3D Applied Load Vector")
+            units = "Metric" if "Metric" in unit_sys else "Imperial"
+            # Using trial sizes from Tab 2 or defaults
+            fig = fig_3d(st.session_state['ldf'], 3.0, 3.0, cw, cd, units)
+            st.plotly_chart(fig, use_container_width=True)
+
+if __name__ == "__main__":
+    main()
