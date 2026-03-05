@@ -2,186 +2,183 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import math
+import io, math, re
 
-# --- Page Setup ---
-st.set_page_config(layout="wide", page_title="Foundation Calculation Sheet")
+# --- Page Setup & Professional Styling ---
+st.set_page_config(layout="wide", page_title="MAT 3D Foundation Calc Sheet")
 
 st.markdown("""
 <style>
     .main { background-color: #ffffff; }
-    .report-box { 
-        background-color: #f8f9fa; 
-        border: 1px solid #dee2e6; 
-        padding: 25px; 
-        border-radius: 5px; 
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    .calc-sheet {
+        background-color: #fcfcfc;
+        border: 1px solid #d1d5db;
+        padding: 40px;
+        border-radius: 4px;
+        color: #111827;
+        font-family: 'Segoe UI', serif;
     }
-    .math-header { 
-        color: #1a365d; 
-        border-bottom: 2px solid #1a365d; 
-        margin-top: 20px; 
-        padding-bottom: 5px;
-        font-weight: bold;
+    .sec-header {
+        border-bottom: 2px solid #1e3a8a;
+        color: #1e3a8a;
+        font-weight: 700;
+        margin-top: 30px;
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        font-size: 1.1rem;
     }
-    .check-pass { color: #28a745; font-weight: bold; }
-    .check-fail { color: #dc3545; font-weight: bold; }
+    .math-expr { font-size: 1.1rem; margin: 15px 0; }
+    .status-pass { color: #047857; font-weight: 700; }
+    .status-fail { color: #b91c1c; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🏗️ Foundation Design Calculation Sheet")
-st.caption("Detailed Step-by-Step Structural Verification")
-
-# --- Sidebar Inputs ---
+# --- Sidebar: Constants & SF Limits ---
 with st.sidebar:
-    st.header("1. Geometry & Materials")
+    st.header("📋 Design Criteria")
     unit_sys = st.selectbox("Unit System", ["Imperial (kip, ft)", "Metric (kN, m)"])
     
-    if unit_sys == "Imperial (kip, ft)":
-        L = st.number_input("Footing Length (L)", value=12.0)
-        W = st.number_input("Footing Width (W)", value=12.0)
-        H = st.number_input("Footing Thickness (T)", value=2.5)
-        Df = st.number_input("Soil Depth on Top", value=2.0)
-        gamma_c = st.number_input("Concrete Density (pcf)", value=150.0) / 1000
-        gamma_s = st.number_input("Soil Density (pcf)", value=110.0) / 1000
+    st.subheader("Safety Factor Limits")
+    sf_sliding_limit = st.number_input("Min SF Sliding", value=1.50)
+    sf_ot_limit = st.number_input("Min SF Overturning", value=1.50)
+    
+    st.subheader("Geometry")
+    L = st.number_input("Footing Length (L)", value=12.0 if "Imp" in unit_sys else 4.0)
+    W = st.number_input("Footing Width (W)", value=12.0 if "Imp" in unit_sys else 4.0)
+    H = st.number_input("Footing Thickness (T)", value=2.5 if "Imp" in unit_sys else 0.8)
+    Df = st.number_input("Soil Surcharge Depth", value=2.0 if "Imp" in unit_sys else 0.6)
+
+    st.subheader("Materials & Soil")
+    if "Imp" in unit_sys:
+        gc = st.number_input("Concrete Density (pcf)", value=150.0) / 1000
+        gs = st.number_input("Soil Density (pcf)", value=110.0) / 1000
         qa = st.number_input("Allowable Bearing (ksf)", value=3.0)
-        mu = st.number_input("Friction Coefficient (μ)", value=0.45)
-        f_unit, l_unit, p_unit = "kip", "ft", "ksf"
+        f_u, l_u, p_u = "kip", "ft", "ksf"
     else:
-        L = st.number_input("Footing Length (L)", value=4.0)
-        W = st.number_input("Footing Width (W)", value=4.0)
-        H = st.number_input("Footing Thickness (T)", value=0.8)
-        Df = st.number_input("Soil Depth on Top", value=0.6)
-        gamma_c = st.number_input("Concrete Density (kN/m³)", value=24.0)
-        gamma_s = st.number_input("Soil Density (kN/m³)", value=18.0)
+        gc = st.number_input("Concrete Density (kN/m³)", value=24.0)
+        gs = st.number_input("Soil Density (kN/m³)", value=18.0)
         qa = st.number_input("Allowable Bearing (kPa)", value=150.0)
-        mu = st.number_input("Friction Coefficient (μ)", value=0.45)
-        f_unit, l_unit, p_unit = "kN", "m", "kPa"
+        f_u, l_u, p_u = "kN", "m", "kPa"
+    mu = st.number_input("Friction Coeff (μ)", value=0.45)
 
-# --- Load Inputs ---
-st.markdown('<div class="math-header">1. Controlling Applied Loads (at Pedestal Top)</div>', unsafe_allow_html=True)
-c1, c2 = st.columns(2)
+# --- Main Interface ---
+st.title("🏗️ Isolated Footing Sizing & Review")
+st.markdown("### Logic & Presentation Logic: MAT 3D")
 
-with c1:
-    st.markdown("**ASD Case (Sizing/Stability)**")
-    asd_fy = st.number_input("ASD Vertical (Fy)", value=0.88, key="afy")
-    asd_fx = st.number_input("ASD Lateral (Fx)", value=2.91, key="afx")
-    asd_fz = st.number_input("ASD Lateral (Fz)", value=0.62, key="afz")
-    asd_mx = st.number_input("ASD Moment (Mx)", value=5.33, key="amx")
-    asd_mz = st.number_input("ASD Moment (Mz)", value=37.75, key="amz")
+# Load Input Section
+st.markdown('<div class="sec-header">1. Applied Loads (at Top of Foundation)</div>', unsafe_allow_html=True)
+default_load = "LC-01\t2.91\t-0.65\t-0.62\t-5.33\t0.1\t-37.75"
+load_raw = st.text_area("Paste Load Case (LC | FX | FY | FZ | MX | MY | MZ)", value=default_load, help="Use Tab or Space between numbers")
 
-with c2:
-    st.markdown("**LRFD Case (Concrete Strength)**")
-    ult_fy = st.number_input("LRFD Vertical (Fy)", value=1.23, key="ufy")
-    ult_fx = st.number_input("LRFD Lateral (Fx)", value=3.49, key="ufx")
-    ult_fz = st.number_input("LRFD Lateral (Fz)", value=0.75, key="ufz")
-    ult_mx = st.number_input("LRFD Moment (Mx)", value=6.39, key="umx")
-    ult_mz = st.number_input("LRFD Moment (Mz)", value=45.30, key="umz")
+# Parser
+def parse(text):
+    try:
+        parts = re.split(r'[ \t]+', text.strip())
+        return {"LC": parts[0], "Fx": float(parts[1]), "Fy": float(parts[2]), "Fz": float(parts[3]), 
+                "Mx": float(parts[4]), "My": float(parts[5]), "Mz": float(parts[6])}
+    except: return None
 
-# --- Calculation Logic ---
-# Properties
-Area = L * W
-Sx = (L * W**2) / 6
-Sz = (W * L**2) / 6
-Ix = (L * W**3) / 12
-Iz = (W * L**3) / 12
+load = parse(load_raw)
 
-# Weights
-Wt_c = Area * H * gamma_c
-Wt_s = Area * Df * gamma_s
-Wt_total = Wt_c + Wt_s
+if load:
+    # 1. Total Weight Calculation
+    Area = L * W
+    Wt_conc = Area * H * gc
+    Wt_soil = Area * Df * gs
+    Wt_total = Wt_conc + Wt_soil
 
-# ASD Calculations
-P_tot_asd = asd_fy + Wt_total
-Mx_base_asd = asd_mx + abs(asd_fz * H)
-Mz_base_asd = asd_mz + abs(asd_fx * H)
+    # 2. Base Load Calculation (assuming Fy is reaction, flip for load if needed)
+    # We use user logic: +Fy is compression.
+    P_total = load['Fy'] + Wt_total
+    Mx_base = load['Mx'] + abs(load['Fz'] * H)
+    Mz_base = load['Mz'] + abs(load['Fx'] * H)
 
-# Bearing
-q_calc = []
-for i in [1, -1]:
-    for j in [1, -1]:
-        q_calc.append((P_tot_asd/Area) + (i*Mx_base_asd/Sx) + (j*Mz_base_asd/Sz))
-q_max, q_min = max(q_calc), min(q_calc)
+    # 3. Section Properties
+    Sx, Sz = (L * W**2)/6, (W * L**2)/6
+    Ix, Iz = (L * W**3)/12, (W * L**3)/12
 
-# Stability
-resisting_force = abs(P_tot_asd) * mu
-acting_force = math.sqrt(asd_fx**2 + asd_fz**2)
-fos_sliding = resisting_force / acting_force if acting_force > 0 else 99
+    # Tabs for Display
+    tab1, tab2, tab3 = st.tabs(["📜 Detailed Calc Note", "🌈 Stress Contour", "🧊 3D Load View"])
 
-res_mx = P_tot_asd * (W/2)
-res_mz = P_tot_asd * (L/2)
-fos_ot_x = res_mx / abs(Mx_base_asd) if Mx_base_asd != 0 else 99
-fos_ot_z = res_mz / abs(Mz_base_asd) if Mz_base_asd != 0 else 99
+    with tab1:
+        st.markdown('<div class="calc-sheet">', unsafe_allow_html=True)
+        
+        # Section 1: Gravity
+        st.markdown('<div class="sec-header">Section A: Vertical Load Breakdown</div>', unsafe_allow_html=True)
+        st.latex(rf"W_{{concrete}} = L \times W \times T \times \gamma_c = {L} \times {W} \times {H} \times {gc:.3f} = {Wt_conc:.2f} \text{{ {f_u}}}")
+        st.latex(rf"W_{{soil}} = L \times W \times D_f \times \gamma_s = {L} \times {W} \times {Df} \times {gs:.3f} = {Wt_soil:.2f} \text{{ {f_u}}}")
+        st.latex(rf"P_{{total}} = P_{{applied}} + W_{{conc}} + W_{{soil}} = {load['Fy']} + {Wt_conc:.2f} + {Wt_soil:.2f} = {P_total:.2f} \text{{ {f_u}}}")
 
-# --- Report Tabs ---
-tab1, tab2 = st.tabs(["📜 Detailed Calculation Sheet", "🌈 Stress Contour"])
+        # Section 2: Bearing
+        st.markdown('<div class="sec-header">Section B: Soil Bearing Pressure</div>', unsafe_allow_html=True)
+        st.write("Base Moments including eccentricity from lateral loads:")
+        st.latex(rf"M_{{x,base}} = M_x + (F_z \times T) = {load['Mx']} + ({load['Fz']} \times {H}) = {Mx_base:.2f} \text{{ {f_u}-{l_u}}}")
+        st.latex(rf"M_{{z,base}} = M_z + (F_x \times T) = {load['Mz']} + ({load['Fx']} \times {H}) = {Mz_base:.2f} \text{{ {f_u}-{l_u}}}")
+        
+        q_max = (P_total/Area) + abs(Mx_base/Sx) + abs(Mz_base/Sz)
+        ratio_b = q_max / qa
+        st.latex(rf"q_{{max}} = \frac{{P_{{tot}}}}{{A}} + \frac{{|M_{{x,b}}|}}{{S_x}} + \frac{{|M_{{z,b}}|}}{{S_z}} = \frac{{{P_total:.2f}}}{{{Area:.2f}}} + \frac{{{abs(Mx_base):.2f}}}{{{Sx:.2f}}} + \frac{{{abs(Mz_base):.2f}}}{{{Sz:.2f}}} = {q_max:.3f} \text{{ {p_u}}}")
+        
+        status_b = "PASS" if ratio_b <= 1.0 else "FAIL"
+        st.markdown(f"**Bearing Check:** {q_max:.3f} / {qa} = **Ratio: {ratio_b:.2f}** → <span class='status-{'pass' if status_b=='PASS' else 'fail'}'>{status_b}</span>", unsafe_allow_html=True)
 
-with tab1:
-    st.markdown('<div class="math-header">2. Foundation Self-Weight & Section Properties</div>', unsafe_allow_html=True)
-    st.latex(f"W_{{concrete}} = L \\times W \\times T \\times \\gamma_c = {L} \\times {W} \\times {H} \\times {gamma_c:.3f} = {Wt_c:.2f} \\text{{ {f_unit}}}")
-    st.latex(f"W_{{soil}} = L \\times W \\times D_f \\times \\gamma_s = {L} \\times {W} \\times {Df} \\times {gamma_s:.3f} = {Wt_s:.2f} \\text{{ {f_unit}}}")
-    st.latex(f"W_{{total}} = {Wt_c:.2f} + {Wt_s:.2f} = {Wt_total:.2f} \\text{{ {f_unit}}}")
-    
-    st.markdown('<div class="math-header">3. Stability & Bearing Check (ASD)</div>', unsafe_allow_html=True)
-    st.write("**Total Vertical Load at Base:**")
-    st.latex(f"P_{{total}} = P_{{applied}} + W_{{total}} = {asd_fy} + {Wt_total:.2f} = {P_tot_asd:.2f} \\text{{ {f_unit}}}")
-    
-    st.write("**Overturning Moments at Base:**")
-    st.latex(f"M_{{x,base}} = M_x + (F_z \\times T) = {asd_mx} + ({asd_fz} \\times {H}) = {Mx_base_asd:.2f} \\text{{ {f_unit}-{l_unit}}}")
-    st.latex(f"M_{{z,base}} = M_z + (F_x \\times T) = {asd_mz} + ({asd_fx} \\times {H}) = {Mz_base_asd:.2f} \\text{{ {f_unit}-{l_unit}}}")
-    
-    st.write("**Maximum Bearing Pressure:**")
-    st.latex(f"q_{{max}} = \\frac{{P_{{total}}}}{{A}} + \\frac{{M_{{x,base}}}}{{S_x}} + \\frac{{M_{{z,base}}}}{{S_z}}")
-    st.latex(f"q_{{max}} = \\frac{{{P_tot_asd:.2f}}}{{{Area:.2f}}} + \\frac{{{abs(Mx_base_asd):.2f}}}{{{Sx:.2f}}} + \\frac{{{abs(Mz_base_asd):.2f}}}{{{Sz:.2f}}} = {q_max:.3f} \\text{{ {p_unit}}}")
-    
-    # SF Summary Table
-    st.write("**Summary of Safety Factors:**")
-    summary_data = {
-        "Check": ["Bearing Pressure", "Sliding Stability", "Overturning (X)", "Overturning (Z)"],
-        "Actual / FOS": [f"{q_max:.3f} {p_unit}", f"{fos_sliding:.2f}", f"{fos_ot_x:.2f}", f"{fos_ot_z:.2f}"],
-        "Limit": [f"Allowable: {qa} {p_unit}", "Min FOS: 1.50", "Min FOS: 1.50", "Min FOS: 1.50"],
-        "Ratio": [f"{q_max/qa:.2f}", f"{1.5/fos_sliding:.2f}", f"{1.5/fos_ot_x:.2f}", f"{1.5/fos_ot_z:.2f}"],
-        "Status": ["PASS" if q_max <= qa else "FAIL", "PASS" if fos_sliding >= 1.5 else "FAIL", "PASS" if fos_ot_x >= 1.5 else "FAIL", "PASS" if fos_ot_z >= 1.5 else "FAIL"]
-    }
-    st.table(pd.DataFrame(summary_data))
+        # Section 3: Sliding
+        st.markdown('<div class="sec-header">Section C: Sliding Stability</div>', unsafe_allow_html=True)
+        F_res = abs(P_total) * mu
+        F_act = math.sqrt(load['Fx']**2 + load['Fz']**2)
+        sf_sl = F_res / F_act if F_act > 0 else 99
+        st.latex(rf"F_{{resisting}} = P_{{total}} \times \mu = {P_total:.2f} \times {mu} = {F_res:.2f} \text{{ {f_u}}}")
+        st.latex(rf"F_{{acting}} = \sqrt{{F_x^2 + F_z^2}} = \sqrt{{{load['Fx']}^2 + {load['Fz']}^2}} = {F_act:.2f} \text{{ {f_u}}}")
+        
+        ratio_sl = sf_sliding_limit / sf_sl
+        status_sl = "PASS" if sf_sl >= sf_sliding_limit else "FAIL"
+        st.markdown(f"**Sliding SF:** {sf_sl:.2f} (Limit: {sf_sliding_limit}) = **Ratio: {ratio_sl:.2f}** → <span class='status-{'pass' if status_sl=='PASS' else 'fail'}'>{status_sl}</span>", unsafe_allow_html=True)
 
-with tab2:
-    st.subheader("Soil Contact Stress Contour")
-    
-    # 50x50 Grid for heatmap
-    res = 50
-    x_grid = np.linspace(-L/2, L/2, res)
-    z_grid = np.linspace(-W/2, W/2, res)
-    X, Z = np.meshgrid(x_grid, z_grid)
-    
-    # Stress distribution: q = P/A + (Mx*z)/Ix + (Mz*x)/Iz
-    Q = (P_tot_asd/Area) + (Mx_base_asd * Z / Ix) + (Mz_base_asd * X / Iz)
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=Q, x=x_grid, y=z_grid,
-        colorscale='RdYlGn_r',
-        colorbar=dict(title=f"q ({p_unit})"),
-        zmin=0, zmax=qa * 1.1
-    ))
-    
-    # Corner Value Annotations
-    cx = [L/2, -L/2, L/2, -L/2]
-    cz = [W/2, W/2, -W/2, -W/2]
-    cq = (P_tot_asd/Area) + (Mx_base_asd * np.array(cz) / Ix) + (Mz_base_asd * np.array(cx) / Iz)
-    
-    fig.add_trace(go.Scatter(
-        x=cx, y=cz, mode='text+markers',
-        text=[f"{v:.2f}" for v in cq],
-        textposition="top center",
-        marker=dict(color='black', size=12, symbol='square'),
-        name="Corner Pressures"
-    ))
+        # Section 4: Overturning
+        st.markdown('<div class="sec-header">Section D: Overturning Stability</div>', unsafe_allow_html=True)
+        M_res_x, M_res_z = P_total * (W/2), P_total * (L/2)
+        sf_ot_x = M_res_x / abs(Mx_base) if Mx_base != 0 else 99
+        sf_ot_z = M_res_z / abs(Mz_base) if Mz_base != 0 else 99
+        sf_ot_min = min(sf_ot_x, sf_ot_z)
+        
+        st.latex(rf"M_{{res,x}} = P \times \frac{{W}}{{2}} = {P_total:.2f} \times {W/2} = {M_res_x:.2f}")
+        st.latex(rf"SF_{{ot,x}} = \frac{{M_{{res,x}}}}{{M_{{over,x}}}} = \frac{{{M_res_x:.2f}}}{{{abs(Mx_base):.2f}}} = {sf_ot_x:.2f}")
+        
+        ratio_ot = sf_ot_limit / sf_ot_min
+        status_ot = "PASS" if sf_ot_min >= sf_ot_limit else "FAIL"
+        st.markdown(f"**Overturning SF:** {sf_ot_min:.2f} (Limit: {sf_ot_limit}) = **Ratio: {ratio_ot:.2f}** → <span class='status-{'pass' if status_ot=='PASS' else 'fail'}'>{status_ot}</span>", unsafe_allow_html=True)
 
-    fig.update_layout(
-        xaxis_title="Length (X)", yaxis_title="Width (Z)",
-        width=800, height=700, template="plotly_white"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    if q_min < 0:
-        st.error(f"⚠️ Loss of Contact: Minimum pressure is {q_min:.3f}. Part of footing is in tension.")
+    with tab2:
+        # Contour Logic
+        res = 40
+        x_g = np.linspace(-L/2, L/2, res)
+        z_g = np.linspace(-W/2, W/2, res)
+        X, Z = np.meshgrid(x_g, z_g)
+        Q_dist = (P_total/Area) + (Mx_base * Z / Ix) + (Mz_base * X / Iz)
+        
+        fig_q = go.Figure(data=go.Heatmap(z=Q_dist, x=x_g, y=z_g, colorscale='RdYlGn_r', zmin=0, zmax=qa*1.1))
+        
+        # Corner Labels
+        cx, cz = [L/2, -L/2, L/2, -L/2], [W/2, W/2, -W/2, -W/2]
+        cq = (P_total/Area) + (Mx_base * np.array(cz) / Ix) + (Mz_base * np.array(cx) / Iz)
+        fig_q.add_trace(go.Scatter(x=cx, y=cz, mode='text+markers', text=[f"{v:.2f}" for v in cq], textfont=dict(color="black", size=14), name="Corner Pressures"))
+        
+        fig_q.update_layout(title="Base Pressure Contour", xaxis_title="X (m/ft)", yaxis_title="Z (m/ft)", width=700, height=600)
+        st.plotly_chart(fig_q)
+
+    with tab3:
+        # 3D Load logic
+        fig_3d = go.Figure()
+        # Footing
+        fig_3d.add_trace(go.Mesh3d(x=[-L/2, L/2, L/2, -L/2, -L/2, L/2, L/2, -L/2], y=[-W/2, -W/2, W/2, W/2, -W/2, -W/2, W/2, W/2], z=[-H, -H, -H, -H, 0, 0, 0, 0], 
+                                  color='royalblue', opacity=0.4, name='Foundation'))
+        # Arrows
+        sc = max(L,W)*0.4 / (abs(load['Fy'])+1)
+        fig_3d.add_trace(go.Scatter3d(x=[0, load['Fx']*sc], y=[0, load['Fz']*sc], z=[1, 1-abs(load['Fy'])*sc], mode='lines+markers', line=dict(color='red', width=8), name='Load Vector'))
+        fig_3d.update_layout(scene=dict(aspectmode='data', xaxis_title='X', yaxis_title='Z', zaxis_title='Vert'), margin=dict(l=0,r=0,b=0,t=0))
+        st.plotly_chart(fig_3d)
+
+else:
+    st.warning("Invalid load format. Please ensure you have 7 columns (LC + 6 values).")
