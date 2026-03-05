@@ -71,7 +71,7 @@ st.markdown("### Presentation Style: MAT 3D / STAAD RCDC")
 
 # Load Input Section
 st.markdown('<div class="sec-header">1. Applied Loads (at Top of Pedestal)</div>', unsafe_allow_html=True)
-default_load = "LC-01\t2.91\t-0.65\t-0.62\t-5.33\t0.1\t-37.75"
+default_load = "LC-01\t2.89\t-0.67\t-0.82\t-7.27\t0.15\t-37.53"
 load_raw = st.text_area("Paste Load Case (LC | FX | FY | FZ | MX | MY | MZ)", value=default_load)
 
 # Parser
