@@ -1,6 +1,6 @@
 """
 Foundation Design Tool — STAAD RCDC / MAT3D Style
-Added: Stress Contour Heatmap Tab
+Complete Version: Sizing, Detailed Calcs, and Stress Contours
 """
 
 import streamlit as st
@@ -9,163 +9,168 @@ import pandas as pd
 import plotly.graph_objects as go
 import io, math, re
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Foundation Sizing & Calcs", page_icon="📐", layout="wide")
+# 1. PAGE CONFIGURATION & STYLING
+st.set_page_config(page_title="Foundation Sizing & Stress", page_icon="📐", layout="wide")
 
 st.markdown("""
 <style>
-.stApp{background:#0f1117;color:#e0e0e0}
-.sec-hdr{background:linear-gradient(90deg,#1565c0,#0d47a1);color:#fff;
-  padding:8px 16px;border-radius:6px;font-weight:700;margin:12px 0 8px}
+.stApp { background:#0f1117; color:#e0e0e0; }
+.sec-hdr { 
+    background: linear-gradient(90deg, #1565c0, #0d47a1); 
+    color: #fff; 
+    padding: 10px 16px; 
+    border-radius: 6px; 
+    font-weight: 700; 
+    margin: 15px 0 10px; 
+}
+.metric-card {
+    background: linear-gradient(135deg, #1a1f2e, #16213e);
+    border: 1px solid #2d3561;
+    border-radius: 10px;
+    padding: 15px;
+    text-align: center;
+}
+.metric-value { font-size: 1.6rem; font-weight: 700; color: #4fc3f7; }
+.metric-label { font-size: 0.75rem; color: #90a4ae; text-transform: uppercase; }
 </style>""", unsafe_allow_html=True)
 
+# 2. HELPER FUNCTIONS (To prevent NameError)
+def sec(t): 
+    st.markdown(f'<div class="sec-hdr">{t}</div>', unsafe_allow_html=True)
+
+def info(t): 
+    st.info(t)
+
+def mcard(lbl, val, col):
+    col.markdown(f'<div class="metric-card"><div class="metric-value">{val}</div>'
+                 f'<div class="metric-label">{lbl}</div></div>', unsafe_allow_html=True)
+
 def parse_staad_text(text, flip_axial):
+    """Handles Tabs, Spaces, and Commas from STAAD/Excel."""
     try:
+        # Standardize delimiters
         clean_text = re.sub(r'[ \t]+', ',', text.strip())
         df = pd.read_csv(io.StringIO(clean_text))
-        mapping = {'LC': 'Case', 'L/C': 'Case', 'LOAD': 'Case', 'CASE': 'Case', 'FX': 'Fx', 'FY': 'Fy', 'FZ': 'Fz', 'MX': 'Mx', 'MY': 'My', 'MZ': 'Mz'}
+        
+        # Column Name Mapping
+        mapping = {
+            'LC': 'Case', 'L/C': 'Case', 'LOAD': 'Case', 'CASE': 'Case',
+            'FX': 'Fx', 'FY': 'Fy', 'FZ': 'Fz',
+            'MX': 'Mx', 'MY': 'My', 'MZ': 'Mz'
+        }
         df.columns = [str(c).upper().strip() for c in df.columns]
         df.rename(columns=mapping, inplace=True)
-        if 'Case' not in df.columns: df.rename(columns={df.columns[0]: 'Case'}, inplace=True)
+        
+        # Fallback if 'Case' is missing
+        if 'Case' not in df.columns:
+            df.rename(columns={df.columns[0]: 'Case'}, inplace=True)
+            
+        # Numeric conversion
         for c in ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']:
-            if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
-        if flip_axial: df['Fy'] = -df['Fy']
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        
+        if flip_axial:
+            df['Fy'] = -df['Fy']
+            
         return df
     except Exception as e:
-        st.error(f"Parsing error: {e}")
+        st.error(f"Data Parser Error: {e}")
         return None
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────────────────────
+# 3. MAIN APPLICATION
 def main():
     st.title("🏗️ Foundation Sizing & Stress Analysis")
     
+    # SIDEBAR CONTROLS
     with st.sidebar:
-        st.header("1. Global Settings")
+        sec("1. Configuration")
         unit_sys = st.selectbox("Units", ["Imperial (kip, ft)", "Metric (kN, m)"])
         flip_ax = st.checkbox("Flip Axial Sign (STAAD Reaction)", value=True)
+        asd_tag = st.text_input("Sizing Case Prefix", value="[4-")
         
-        st.header("2. Design Limits")
+        sec("2. Design Parameters")
         qa = st.number_input("Allowable Bearing (ksf/kPa)", value=3.0 if "Imp" in unit_sys else 150.0)
-        mu = st.number_input("Friction Coeff (μ)", value=0.45)
+        mu = st.number_input("Friction Coefficient (μ)", value=0.45)
         
-        st.header("3. Material Densities")
+        sec("3. Densities")
         gc = st.number_input("Concrete (pcf/kN/m³)", value=150.0 if "Imp" in unit_sys else 24.0)
         gs = st.number_input("Soil (pcf/kN/m³)", value=110.0 if "Imp" in unit_sys else 18.0)
         
-        st.header("4. Footing Geometry")
+        sec("4. Geometry")
         Lx = st.number_input("Length Lx", value=12.0 if "Imp" in unit_sys else 4.0)
         Lz = st.number_input("Width Lz", value=12.0 if "Imp" in unit_sys else 4.0)
         H = st.number_input("Thickness H", value=2.0 if "Imp" in unit_sys else 0.6)
-        Df = st.number_input("Soil Surcharge Depth", value=2.0 if "Imp" in unit_sys else 0.6)
+        Df = st.number_input("Soil Depth Df", value=2.0 if "Imp" in unit_sys else 0.6)
 
-    t1, t2, t3, t4 = st.tabs(["📂 Load Input", "📐 Sizing Summary", "📜 Calculation Report", "🌈 Stress Contour"])
+    t1, t2, t3, t4 = st.tabs(["📂 Load Input", "📐 Sizing Results", "📜 Calc Report", "🌈 Stress Contour"])
 
     with t1:
         sec("① Load Case Entry")
         default_data = "LC	FX	FY	FZ	MX	MY	MZ\n[4-1.2]	2.91	-0.65	-0.62	-5.33	0.1	-37.75"
-        raw = st.text_area("Paste Load Cases", value=default_data, height=150)
+        raw = st.text_area("Paste STAAD/Excel Rows Here", value=default_data, height=150)
         if raw:
             df = parse_staad_text(raw, flip_ax)
-            st.session_state['ldf'] = df
-            st.dataframe(df)
+            if df is not None:
+                st.session_state['ldf'] = df
+                st.dataframe(df, use_container_width=True)
 
     if 'ldf' in st.session_state:
         ldf = st.session_state['ldf']
         
-        # --- Constants & Properties ---
+        # Calculation Constants
         Area = Lx * Lz
-        Sx = (Lx * Lz**2) / 6
-        Sz = (Lz * Lx**2) / 6
-        Ix = (Lx * Lz**3) / 12
-        Iz = (Lz * Lx**3) / 12
+        Sx, Sz = (Lx * Lz**2)/6, (Lz * Lx**2)/6
+        Ix, Iz = (Lx * Lz**3)/12, (Lz * Lx**3)/12
         
-        # Weight Calculations
-        if "Imp" in unit_sys:
-            W_conc = Area * H * (gc/1000)
-            W_soil = Area * Df * (gs/1000)
-        else:
-            W_conc = Area * H * gc
-            W_soil = Area * Df * gs
+        W_conc = Area * H * (gc/1000 if "Imp" in unit_sys else gc)
+        W_soil = Area * Df * (gs/1000 if "Imp" in unit_sys else gs)
         W_total = W_conc + W_soil
-        
+
         with t2:
-            sec("② Sizing Overview (ASD Checks)")
-            results = []
-            for _, r in ldf.iterrows():
+            sec("② Bearing & Sizing Summary")
+            asd_df = ldf[ldf['Case'].str.contains(asd_tag, na=False, regex=False)]
+            if asd_df.empty: asd_df = ldf # Fallback if no tag matches
+            
+            res_rows = []
+            for _, r in asd_df.iterrows():
                 P_tot = r['Fy'] + W_total
                 Mx_b = r['Mx'] + r['Fz']*H
                 Mz_b = r['Mz'] + r['Fx']*H
                 q_max = (P_tot/Area) + abs(Mx_b/Sx) + abs(Mz_b/Sz)
-                results.append({"LC": r['Case'], "P_Total": round(P_tot,2), "q_max": round(q_max,3), "Status": "✅ OK" if q_max <= qa else "❌ FAIL"})
-            st.table(pd.DataFrame(results))
+                res_rows.append({"Case": r['Case'], "P_Total": round(P_tot,2), "q_max": round(q_max,3), "Status": "OK" if q_max <= qa else "FAIL"})
+            st.table(pd.DataFrame(res_rows))
 
         with t3:
-            sec("③ Detailed Calculation (Step-by-Step)")
-            sel_case = st.selectbox("Select Case for Detailed Calcs", ldf['Case'])
-            r = ldf[ldf['Case'] == sel_case].iloc[0]
+            sec("③ Step-by-Step Mathematical Report")
+            sel = st.selectbox("Select Case", ldf['Case'])
+            r = ldf[ldf['Case'] == sel].iloc[0]
             
+            Mx_b, Mz_b = r['Mx'] + r['Fz']*H, r['Mz'] + r['Fx']*H
             P_tot = r['Fy'] + W_total
-            Mx_b = r['Mx'] + r['Fz']*H
-            Mz_b = r['Mz'] + r['Fx']*H
-            q_max = (P_tot/Area) + abs(Mx_b/Sx) + abs(Mz_b/Sz)
+            q_val = (P_tot/Area) + abs(Mx_b/Sx) + abs(Mz_b/Sz)
 
-            st.latex(f"q_{{max}} = \\frac{{{P_tot:.2f}}}{{{Area:.2f}}} + \\frac{{{abs(Mx_b):.2f}}}{{{Sx:.2f}}} + \\frac{{{abs(Mz_b):.2f}}}{{{Sz:.2f}}} = {q_max:.3f}")
+            st.markdown("#### Weight Calculations")
+            st.latex(f"W_{{total}} = (Area \\times H \\times \\gamma_c) + (Area \\times D_f \\times \\gamma_s) = {W_total:.2f}")
+            st.markdown("#### Bearing Pressure Calculation")
+            st.latex(f"q_{{max}} = \\frac{{{P_tot:.2f}}}{{{Area:.2f}}} + \\frac{{{abs(Mx_b):.2f}}}{{{Sx:.2f}}} + \\frac{{{abs(Mz_b):.2f}}}{{{Sz:.2f}}} = {q_val:.3f}")
 
         with t4:
-            sec("④ Soil Bearing Pressure Contour")
-            sel_case_plot = st.selectbox("Select Case for Contour", ldf['Case'], key="plot_case")
-            rp = ldf[ldf['Case'] == sel_case_plot].iloc[0]
+            sec("④ Bearing Pressure Heatmap")
+            sel_p = st.selectbox("Select Case for Contour", ldf['Case'], key="p_case")
+            rp = ldf[ldf['Case'] == sel_p].iloc[0]
             
-            P_p = rp['Fy'] + W_total
-            Mx_p = rp['Mx'] + rp['Fz']*H
-            Mz_p = rp['Mz'] + rp['Fx']*H
+            # Grid Generation
+            x_pts = np.linspace(-Lx/2, Lx/2, 40)
+            z_pts = np.linspace(-Lz/2, Lz/2, 40)
+            X, Z = np.meshgrid(x_pts, z_pts)
             
-            # Generate Grid
-            res = 50
-            x = np.linspace(-Lx/2, Lx/2, res)
-            z = np.linspace(-Lz/2, Lz/2, res)
-            X, Z = np.meshgrid(x, z)
-            
-            # Linear Pressure distribution: q = P/A + Mx*z/Ix + Mz*x/Iz
-            # Note: Mx creates stress along Z-axis, Mz creates stress along X-axis
+            P_p, Mx_p, Mz_p = rp['Fy'] + W_total, rp['Mx'] + rp['Fz']*H, rp['Mz'] + rp['Fx']*H
             Q = (P_p/Area) + (Mx_p * Z / Ix) + (Mz_p * X / Iz)
             
-            fig = go.Figure(data=go.Heatmap(
-                z=Q, x=x, y=z,
-                colorscale='RdYlGn_r',
-                zmin=0, zmax=qa * 1.2,
-                colorbar=dict(title=f"Pressure ({'ksf' if 'Imp' in unit_sys else 'kPa'})")
-            ))
-            
-            # Add labels for corners
-            corners_x = [Lx/2, -Lx/2, Lx/2, -Lx/2]
-            corners_z = [Lz/2, Lz/2, -Lz/2, -Lz/2]
-            corner_q = (P_p/Area) + (Mx_p * np.array(corners_z) / Ix) + (Mz_p * np.array(corners_x) / Iz)
-            
-            fig.add_trace(go.Scatter(
-                x=corners_x, y=corners_z,
-                mode='text+markers',
-                text=[f"{v:.2f}" for v in corner_q],
-                textposition="top center",
-                marker=dict(color='black', size=10),
-                name="Corner Pressure"
-            ))
-
-            fig.update_layout(
-                title=f"Bearing Pressure Distribution: {sel_case_plot}",
-                xaxis_title="X-Axis (Length)",
-                yaxis_title="Z-Axis (Width)",
-                width=800, height=600,
-                template="plotly_dark"
-            )
+            fig = go.Figure(data=go.Heatmap(z=Q, x=x_pts, y=z_pts, colorscale='RdYlGn_r', zmin=0, zmax=qa*1.2))
+            fig.update_layout(title=f"Pressure Contour: {sel_p}", xaxis_title="X (Length)", yaxis_title="Z (Width)", template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
-            
-            if np.any(Q < 0):
-                st.warning("⚠️ Uplift Detected: Part of the footing base has negative pressure (loss of contact).")
 
 if __name__ == "__main__":
     main()
