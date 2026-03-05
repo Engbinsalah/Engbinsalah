@@ -1,761 +1,1007 @@
-"""
-Foundation Design Tool — STAAD RCDC / MAT3D Style
-Paste LC table directly from STAAD output
-Units: kip / kip-ft throughout
-LRFD (prefix 5-) → Strength Design (ACI 318-19)
-ASD  (prefix 4-) → Bearing Check
-"""
-
 import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import io, math, re
+from plotly.subplots import make_subplots
+import math
+import re
 
-st.set_page_config(page_title="Foundation Design", page_icon="🏗️",
-                   layout="wide", initial_sidebar_state="expanded")
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE CONFIG & GLOBAL STYLING
+# ─────────────────────────────────────────────────────────────────────────────
+st.set_page_config(layout="wide", page_title="Foundation Engineering Report", page_icon="🏗️")
 
 st.markdown("""
 <style>
-.stApp{background:#0f1117;color:#e2e8f0}
-.metric-card{background:linear-gradient(135deg,#1a1f2e,#16213e);border:1px solid #2d3561;
-  border-radius:10px;padding:14px;text-align:center;margin:3px}
-.metric-value{font-size:1.6rem;font-weight:700;color:#4fc3f7}
-.metric-label{font-size:.72rem;color:#90a4ae;text-transform:uppercase;letter-spacing:.8px;margin-top:2px}
-.sec-hdr{background:linear-gradient(90deg,#1565c0,#0d47a1);color:#fff;
-  padding:7px 14px;border-radius:6px;font-weight:700;font-size:1rem;margin:10px 0 6px}
-.info-box{background:#0d2137;border-left:4px solid #1565c0;
-  padding:9px 13px;border-radius:4px;margin:5px 0;font-size:.85rem}
-.lrfd-tag{background:#1565c0;color:#fff;border-radius:4px;padding:2px 8px;
-  font-size:.75rem;font-weight:700}
-.asd-tag{background:#2e7d32;color:#fff;border-radius:4px;padding:2px 8px;
-  font-size:.75rem;font-weight:700}
-div[data-testid="stSidebar"]{background:#0d1117;border-right:1px solid #1e2a3a}
-.stButton>button{background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;
-  border:none;border-radius:6px;font-weight:700;padding:10px 28px;width:100%}
-.stTextArea textarea{background:#0d1a26;color:#e2e8f0;border:1px solid #1e3a5f;
-  font-family:monospace;font-size:.8rem}
-</style>""", unsafe_allow_html=True)
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
 
-def sec(t): st.markdown(f'<div class="sec-hdr">{t}</div>', unsafe_allow_html=True)
-def info(t): st.markdown(f'<div class="info-box">{t}</div>', unsafe_allow_html=True)
-def mcard(lbl, val, col):
-    col.markdown(f'<div class="metric-card"><div class="metric-value">{val}</div>'
-                 f'<div class="metric-label">{lbl}</div></div>', unsafe_allow_html=True)
+html, body, [class*="css"] {
+    font-family: 'IBM Plex Sans', sans-serif;
+}
+.main { background-color: #0f1117; }
+.block-container { padding-top: 1rem; }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOAD PARSER
-# ─────────────────────────────────────────────────────────────────────────────
-def classify_lc(name: str) -> str:
-    n = name.strip().lstrip("[")
-    if re.match(r"5[-–]", n): return "LRFD"
-    if re.match(r"4[-–]", n): return "ASD"
-    if re.search(r"1\.[2-9]|1\.4|0\.9\(", n): return "LRFD"
-    return "ASD"
+/* ── Title Bar ── */
+.title-bar {
+    background: linear-gradient(135deg, #0a1628 0%, #1a3a6b 50%, #0d2244 100%);
+    border-bottom: 3px solid #2563eb;
+    padding: 24px 40px 20px;
+    margin-bottom: 24px;
+    border-radius: 8px;
+    position: relative;
+    overflow: hidden;
+}
+.title-bar::before {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 300px; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(37,99,235,0.15));
+}
+.title-bar h1 {
+    color: #e0f2fe;
+    font-size: 1.9rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+}
+.title-bar .subtitle {
+    color: #7dd3fc;
+    font-size: 0.85rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', monospace;
+}
+.title-bar .badge {
+    display: inline-block;
+    background: rgba(37,99,235,0.3);
+    border: 1px solid #3b82f6;
+    color: #93c5fd;
+    padding: 3px 12px;
+    border-radius: 2px;
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.1em;
+    margin-top: 10px;
+}
 
-def parse_staad_paste(text: str) -> pd.DataFrame:
-    rows = []
-    for line in text.strip().splitlines():
-        line = line.strip()
-        if not line: continue
-        if re.search(r"\bLC\b|\bFX\b|\bNode\b|\bkip\b|\bHorizontal\b", line, re.I): continue
-        parts = re.split(r"\t|  +", line)
-        parts = [p.strip() for p in parts if p.strip()]
-        if len(parts) < 7: continue
-        offset = 1 if re.match(r"^\d+$", parts[0]) else 0
-        if len(parts) < offset + 7: continue
-        lc = parts[offset].strip("[]")
-        try:
-            vals = [float(parts[offset+i+1]) for i in range(6)]
-        except ValueError:
-            continue
-        rows.append([lc] + vals)
-    if not rows: return None
-    return pd.DataFrame(rows, columns=["LC","FX","FY","FZ","MX","MY","MZ"])
+/* ── Section Headers ── */
+.sec-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-left: 4px solid #2563eb;
+    padding: 10px 16px;
+    background: linear-gradient(90deg, rgba(37,99,235,0.12), transparent);
+    color: #bfdbfe;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin: 20px 0 14px;
+    border-radius: 0 4px 4px 0;
+}
 
-def parse_excel(uploaded) -> pd.DataFrame:
-    raw = pd.read_excel(uploaded, header=None)
-    hrow = 0
-    for i, row in raw.iterrows():
-        rs = " ".join([str(v).lower() for v in row.values])
-        if any(k in rs for k in ["lc","fx","fy","node"]): hrow = i; break
-    df = pd.read_excel(uploaded, header=hrow)
-    df.columns = [str(c).strip() for c in df.columns]
-    df = df.dropna(how="all")
-    rename = {}
-    for c in df.columns:
-        cl = c.lower()
-        if any(x in cl for x in ["lc","case","combo","load","l/c"]): rename[c]="LC"
-        elif cl in ("fx","fx (kip)"): rename[c]="FX"
-        elif cl in ("fy","fy (kip)"): rename[c]="FY"
-        elif cl in ("fz","fz (kip)"): rename[c]="FZ"
-        elif cl in ("mx","mx (kip-ft)"): rename[c]="MX"
-        elif cl in ("my","my (kip-ft)"): rename[c]="MY"
-        elif cl in ("mz","mz (kip-ft)"): rename[c]="MZ"
-    df = df.rename(columns=rename)
-    for col in ["LC","FX","FY","FZ","MX","MY","MZ"]:
-        if col not in df.columns: df[col] = 0.0
-    return df[["LC","FX","FY","FZ","MX","MY","MZ"]].dropna(subset=["FY"])
+/* ── KPI Cards ── */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+.kpi-card {
+    background: #1e2535;
+    border: 1px solid #2d3748;
+    border-top: 3px solid #2563eb;
+    padding: 16px;
+    border-radius: 6px;
+    text-align: center;
+}
+.kpi-card.pass { border-top-color: #16a34a; }
+.kpi-card.fail { border-top-color: #dc2626; }
+.kpi-card.warn { border-top-color: #d97706; }
+.kpi-label { color: #94a3b8; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px; }
+.kpi-value { color: #e2e8f0; font-size: 1.6rem; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+.kpi-unit  { color: #64748b; font-size: 0.75rem; margin-top: 2px; }
+.kpi-status-pass { color: #4ade80; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; }
+.kpi-status-fail { color: #f87171; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; }
 
-def add_type(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["Type"] = df["LC"].apply(classify_lc)
-    return df
+/* ── Math Boxes ── */
+.math-panel {
+    background: #151c2e;
+    border: 1px solid #2d3748;
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 10px 0;
+    font-family: 'IBM Plex Mono', monospace;
+}
+.math-panel .label { color: #64748b; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+.math-panel .formula { color: #a5b4fc; font-size: 0.92rem; margin: 3px 0; }
+.math-panel .result  { color: #fde68a; font-size: 1.05rem; font-weight: 600; margin-top: 8px; border-top: 1px solid #2d3748; padding-top: 8px; }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CRITICAL COMBO
-# ─────────────────────────────────────────────────────────────────────────────
-def critical_combos(df: pd.DataFrame):
-    def score(row):
-        M = math.sqrt(float(row["MX"])**2 + float(row["MZ"])**2)
-        F = math.sqrt(float(row["FX"])**2 + float(row["FZ"])**2)
-        return abs(float(row["FY"])) + M + F
-    lrfd = df[df["Type"]=="LRFD"].copy()
-    asd  = df[df["Type"]=="ASD"].copy()
-    lr = lrfd.loc[lrfd.apply(score, axis=1).idxmax()] if len(lrfd) else None
-    ar = asd.loc[asd.apply(score, axis=1).idxmax()]   if len(asd)  else None
-    return lr, ar
+/* ── Tables ── */
+.eng-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; margin: 12px 0; }
+.eng-table th {
+    background: #1a2540;
+    color: #7dd3fc;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 10px 14px;
+    border-bottom: 2px solid #2563eb;
+    text-align: left;
+}
+.eng-table td { padding: 9px 14px; border-bottom: 1px solid #1e2535; color: #cbd5e1; }
+.eng-table tr:hover td { background: rgba(37,99,235,0.05); }
+.eng-table .hi { color: #fde68a; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+.eng-table .pass-cell { color: #4ade80; font-weight: 700; }
+.eng-table .fail-cell { color: #f87171; font-weight: 700; }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3D FIGURE  (kip / kip-ft labels)
-# ─────────────────────────────────────────────────────────────────────────────
-def fig_3d(df, Lx_ft, Lz_ft, col_w_ft, col_d_ft):
-    # convert ft → display units (keep as ft for geometry)
-    hw,hd,ht = Lx_ft/2, Lz_ft/2, Lx_ft*0.15
-    I=[0,0,0,4,4,4,0,2,2,0,6,4]; J=[1,2,3,5,6,7,1,3,6,4,7,5]; K=[2,3,0,6,7,4,5,7,5,6,2,1]
-    vx=[-hw,hw,hw,-hw,-hw,hw,hw,-hw]; vy=[-hd,-hd,hd,hd,-hd,-hd,hd,hd]; vz=[-ht]*4+[0]*4
-    fig = go.Figure()
-    fig.add_trace(go.Mesh3d(x=vx,y=vy,z=vz,i=I,j=J,k=K,color="#37474f",opacity=.6,name="Footing"))
-    cw2,cd2,ch = col_w_ft/2, col_d_ft/2, Lx_ft*0.4
-    cvx=[-cw2,cw2,cw2,-cw2,-cw2,cw2,cw2,-cw2]
-    cvy=[-cd2,-cd2,cd2,cd2,-cd2,-cd2,cd2,cd2]
-    cvz=[0]*4+[ch]*4
-    fig.add_trace(go.Mesh3d(x=cvx,y=cvy,z=cvz,i=I,j=J,k=K,color="#546e7a",opacity=.85,name="Column"))
-    gx=np.linspace(-hw*2.2,hw*2.2,4); gy=np.linspace(-hd*2.2,hd*2.2,4)
-    GX,GY=np.meshgrid(gx,gy); GZ=np.zeros_like(GX)-ht
-    fig.add_trace(go.Surface(x=GX,y=GY,z=GZ,
-        colorscale=[[0,"#1a237e"],[1,"#283593"]],
-        opacity=.15,showscale=False,name="Soil"))
+/* ── Geometry box ── */
+.geom-row { display: flex; gap: 16px; margin: 12px 0; flex-wrap: wrap; }
+.geom-chip {
+    background: #1a2540;
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+    padding: 8px 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 90px;
+}
+.geom-chip .glabel { color: #64748b; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; }
+.geom-chip .gval   { color: #e2e8f0; font-size: 1.0rem; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
 
-    arrow_scale = max(Lx_ft,Lz_ft)*0.55
-    lrfd_r, asd_r = critical_combos(df)
+/* ── Alert blocks ── */
+.alert-pass { background: rgba(22,163,74,0.1); border: 1px solid #16a34a; border-radius: 4px; padding: 10px 16px; color: #4ade80; font-size: 0.88rem; margin: 8px 0; }
+.alert-fail { background: rgba(220,38,38,0.1); border: 1px solid #dc2626; border-radius: 4px; padding: 10px 16px; color: #f87171; font-size: 0.88rem; margin: 8px 0; }
+.alert-info { background: rgba(37,99,235,0.1); border: 1px solid #2563eb; border-radius: 4px; padding: 10px 16px; color: #93c5fd; font-size: 0.88rem; margin: 8px 0; }
 
-    # thin background arrows for all combos
-    for _, row in df.iterrows():
-        clr = "#1e4976" if row["Type"]=="LRFD" else "#1b4d1b"
-        ref = max(abs(float(row["FY"])),abs(float(row["FX"])),abs(float(row["FZ"])),0.01)
-        sc  = arrow_scale/ref*0.35
-        for dx,dy,dz in [
-            (float(row["FX"])*sc, 0, 0),
-            (0, float(row["FZ"])*sc, 0),
-            (0, 0, -abs(float(row["FY"]))*sc),
-        ]:
-            if max(abs(dx),abs(dy),abs(dz))<0.05: continue
-            fig.add_trace(go.Scatter3d(x=[0,dx],y=[0,dy],z=[ch,ch+dz],
-                mode="lines",line=dict(color=clr,width=2),showlegend=False))
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #0d1526 !important;
+    border-right: 1px solid #1e2d4a;
+}
+[data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stNumberInput label { font-size: 0.78rem; color: #94a3b8 !important; letter-spacing: 0.05em; }
+[data-testid="stSidebar"] hr { border-color: #1e2d4a !important; }
 
-    # thick critical arrows
-    for crit_row, clr, tag in [(lrfd_r,"#ef5350","LRFD"), (asd_r,"#ffca28","ASD")]:
-        if crit_row is None: continue
-        fy = float(crit_row["FY"]); fx = float(crit_row["FX"])
-        fz_v = float(crit_row["FZ"]); mx = float(crit_row["MX"]); mz = float(crit_row["MZ"])
-        ref = max(abs(fy),abs(fx),abs(fz_v),0.01)
-        sc  = arrow_scale/ref
-        for dx,dy,dz,lbl in [
-            (fx*sc,0,0,         f"{tag} Fx={fx:.2f} kip"),
-            (0,fz_v*sc,0,       f"{tag} Fz={fz_v:.2f} kip"),
-            (0,0,-abs(fy)*sc,   f"{tag} Fy={fy:.2f} kip"),
-        ]:
-            if max(abs(dx),abs(dy),abs(dz))<0.05: continue
-            fig.add_trace(go.Scatter3d(x=[0,dx],y=[0,dy],z=[ch,ch+dz],
-                mode="lines",line=dict(color=clr,width=6),name=lbl))
-            fig.add_trace(go.Cone(x=[dx],y=[dy],z=[ch+dz],
-                u=[dx*.22],v=[dy*.22],w=[dz*.22],
-                colorscale=[[0,clr],[1,clr]],showscale=False,
-                sizemode="absolute",sizeref=max(Lx_ft,Lz_ft)*.12,showlegend=False))
-        for moment,axis,mlbl in [(mx,"x",f"{tag} Mx={mx:.2f} kip-ft"),
-                                  (mz,"z",f"{tag} Mz={mz:.2f} kip-ft")]:
-            if abs(moment)<0.01: continue
-            r=max(Lx_ft,Lz_ft)*0.32; t_=np.linspace(0,1.6*math.pi,50)
-            if axis=="x":
-                ax_x=np.zeros_like(t_); ax_y=r*np.cos(t_); az_=ch+Lx_ft*.12+r*np.sin(t_)*0.6
-            else:
-                ax_x=r*np.cos(t_); ax_y=r*np.sin(t_); az_=np.zeros_like(t_)+ch+Lx_ft*.1
-            fig.add_trace(go.Scatter3d(x=ax_x,y=ax_y,z=az_,mode="lines",
-                line=dict(color=clr,width=3,dash="dot"),name=mlbl))
-
-    # dimension labels
-    dz=-ht-.5
-    fig.add_trace(go.Scatter3d(x=[-hw,hw],y=[-hd-.5,-hd-.5],z=[dz,dz],
-        mode="lines+text",line=dict(color="#ffca28",width=2),
-        text=["",f"Lx={Lx_ft:.1f} ft"],textposition="middle right",showlegend=False))
-    fig.add_trace(go.Scatter3d(x=[hw+.5,hw+.5],y=[-hd,hd],z=[dz,dz],
-        mode="lines+text",line=dict(color="#ffca28",width=2),
-        text=["",f"Lz={Lz_ft:.1f} ft"],textposition="middle right",showlegend=False))
-
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title="X (ft)",backgroundcolor="#0d1117",gridcolor="#1e2a3a",showbackground=True),
-            yaxis=dict(title="Y (ft)",backgroundcolor="#0d1117",gridcolor="#1e2a3a",showbackground=True),
-            zaxis=dict(title="Z (ft)",backgroundcolor="#0d1117",gridcolor="#1e2a3a",showbackground=True),
-            bgcolor="#0d1117",camera=dict(eye=dict(x=1.7,y=1.7,z=1.2))),
-        paper_bgcolor="#0f1117",font=dict(color="#cfd8dc"),
-        legend=dict(bgcolor="#13192b",bordercolor="#263238",font=dict(size=10)),
-        height=600,margin=dict(l=0,r=0,t=36,b=0),
-        title=dict(
-            text="3D Applied Loads — 🔴 LRFD Critical  |  🟡 ASD Critical",
-            font=dict(color="#90caf9",size=13)))
-    return fig
+/* Tab styling */
+.stTabs [data-baseweb="tab-list"] { background: #131b2e; border-radius: 6px 6px 0 0; gap: 2px; padding: 4px; }
+.stTabs [data-baseweb="tab"] { background: transparent; color: #64748b; border-radius: 4px; padding: 8px 18px; font-size: 0.82rem; font-weight: 600; letter-spacing: 0.07em; }
+.stTabs [aria-selected="true"] { background: #1e3a7a !important; color: #93c5fd !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FOUNDATION SIZING  (all kip / kip-ft / ft / in / ksf / ksi)
+# SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
-def size_footing(P_ult_kip, Mx_ult_kipft, Mz_ult_kipft,
-                 P_svc_kip, Mx_svc_kipft, Mz_svc_kipft,
-                 qa_ksf, fc_ksi, fy_ksi, cover_in,
-                 col_w_ft, col_d_ft, Df_ft, gc_pcf, gs_pcf):
+with st.sidebar:
+    st.markdown("### ⚙️ Design Parameters")
+    unit_sys = st.selectbox("Unit System", ["Imperial (kip, ft)", "Metric (kN, m)"])
 
-    gc_kcf = gc_pcf / 1000.0
-    gs_kcf = gs_pcf / 1000.0
+    st.markdown("---")
+    st.markdown("**Geometry**")
+    col1s, col2s = st.columns(2)
+    with col1s:
+        Lx = st.number_input("Length Lx", value=8.0, step=0.5)
+        T  = st.number_input("Thickness T", value=1.0, step=0.25)
+        cx = st.number_input("Col Dim cx", value=2.0, step=0.25)
+    with col2s:
+        Lz = st.number_input("Width Lz", value=7.0, step=0.5)
+        D  = st.number_input("Depth D", value=3.0, step=0.25)
+        cz = st.number_input("Col Dim cz", value=2.0, step=0.25)
 
-    # ── 1. Plan size from ASD bearing ────────────────────────────────────
-    qa_net_ksf = qa_ksf - gs_kcf * Df_ft
-    L = math.sqrt(max(abs(P_svc_kip) / max(qa_net_ksf, 0.01), 0.5))
-    L = math.ceil(L * 4) / 4   # round up to nearest 3"
-    for _ in range(25):
-        Wf = L * L * Df_ft * gc_kcf
-        L2 = math.sqrt((abs(P_svc_kip) + Wf) / max(qa_ksf, 0.01))
-        L2 = math.ceil(L2 * 4) / 4
-        if abs(L2 - L) < 0.05: break
-        L = L2
+    st.markdown("---")
+    st.markdown("**Materials & Soil**")
+    if "Imp" in unit_sys:
+        gc = st.number_input("Concrete (pcf)", value=150.0) / 1000
+        gs = st.number_input("Soil (pcf)", value=100.0) / 1000
+        qa = st.number_input("Allow. Bearing (ksf)", value=3.0)
+        f_unit, l_unit, p_unit = "kip", "ft", "ksf"
+    else:
+        gc = st.number_input("Concrete (kN/m³)", value=24.0)
+        gs = st.number_input("Soil (kN/m³)", value=18.0)
+        qa = st.number_input("Allow. Bearing (kPa)", value=150.0)
+        f_unit, l_unit, p_unit = "kN", "m", "kPa"
 
-    P_tot = abs(P_svc_kip) + Wf
-    eX = abs(Mz_svc_kipft) / (P_tot + 1e-9)   # ft
-    eZ = abs(Mx_svc_kipft) / (P_tot + 1e-9)   # ft
-    Lx = math.ceil(max(L, 6*eX + col_w_ft + 2.0) * 4) / 4
-    Lz = math.ceil(max(L, 6*eZ + col_d_ft + 2.0) * 4) / 4
-    A  = Lx * Lz
-    Wf = A * Df_ft * gc_kcf
-    P_tot = abs(P_svc_kip) + Wf
-
-    # ── 2. Bearing pressures (ksf) ────────────────────────────────────────
-    Sx = Lx**2 * Lz / 6.0
-    Sz = Lx * Lz**2 / 6.0
-    q_avg = P_tot / A
-    q_max = P_tot/A + abs(Mz_svc_kipft)/Sx + abs(Mx_svc_kipft)/Sz
-    q_min = P_tot/A - abs(Mz_svc_kipft)/Sx - abs(Mx_svc_kipft)/Sz
-    bearing_ok = q_max <= qa_ksf
-
-    # ── 3. Net factored upward pressure (ksf) ─────────────────────────────
-    qu_ksf = abs(P_ult_kip) / A
-
-    # ── 4. Two-way punching shear  (ACI 318-19, kip / in) ─────────────────
-    phi = 0.75
-    fc_psi = fc_ksi * 1000.0
-    fy_psi = fy_ksi * 1000.0
-    # work in inches
-    col_w_in = col_w_ft * 12; col_d_in = col_d_ft * 12
-    Lx_in = Lx * 12; Lz_in = Lz * 12
-    qu_psi  = qu_ksf / 144.0   # ksf → kip/in² = ksi
-    qu_kip_in2 = qu_psi
-
-    d_in = 10.0   # start
-    Vc2 = Vu2 = 0.0
-    for _ in range(80):
-        b0 = 2*(col_w_in + d_in) + 2*(col_d_in + d_in)
-        Vc2 = phi * 4 * math.sqrt(fc_psi) * b0 * d_in / 1000.0   # kip
-        punch_area_in2 = (col_w_in + d_in) * (col_d_in + d_in)
-        Vu2 = abs(P_ult_kip) - qu_kip_in2 * punch_area_in2
-        if Vc2 >= Vu2: break
-        d_in += 0.5
-    d_punch_in = d_in
-
-    # ── 5. One-way shear ──────────────────────────────────────────────────
-    d_in = d_punch_in
-    Vc1x = Vu1x = Vc1z = Vu1z = 0.0
-    for _ in range(80):
-        dist_x_in = max(Lx_in/2 - col_w_in/2 - d_in, 0)
-        dist_z_in = max(Lz_in/2 - col_d_in/2 - d_in, 0)
-        Vu1x = qu_kip_in2 * Lz_in * dist_x_in
-        Vc1x = phi * 2 * math.sqrt(fc_psi) * Lz_in * d_in / 1000.0
-        Vu1z = qu_kip_in2 * Lx_in * dist_z_in
-        Vc1z = phi * 2 * math.sqrt(fc_psi) * Lx_in * d_in / 1000.0
-        if Vc1x >= Vu1x and Vc1z >= Vu1z: break
-        d_in += 0.5
-    d_req_in = max(d_punch_in, d_in)
-    # round total thickness to nearest 1"
-    t_in = math.ceil(d_req_in + cover_in + 0.5)   # 0.5 = bar radius approx
-    t_in = math.ceil(t_in / 3) * 3                 # nearest 3"
-    d_eff_in = t_in - cover_in - 0.5
-
-    # ── 6. Flexure ────────────────────────────────────────────────────────
-    lx_c_in = max(Lx_in/2 - col_w_in/2, 1.0)
-    lz_c_in = max(Lz_in/2 - col_d_in/2, 1.0)
-    # Mu in kip-in
-    Mu_X = qu_kip_in2 * Lz_in * lx_c_in**2 / 2.0
-    Mu_Z = qu_kip_in2 * Lx_in * lz_c_in**2 / 2.0
-
-    def As_in2(Mu_kipin, b_in, d_):
-        Rn = Mu_kipin / (0.9 * b_in * d_**2)   # ksi
-        rho = 0.85 * fc_ksi / fy_ksi * (1 - math.sqrt(max(0, 1 - 2*Rn/(0.85*fc_ksi))))
-        rho_min = max(200/fy_psi, 0.0018)
-        rho = max(rho, rho_min)
-        return rho * b_in * d_
-
-    As_X = As_in2(Mu_X, Lz_in, d_eff_in)
-    As_Z = As_in2(Mu_Z, Lx_in, d_eff_in)
-    bar_dia_in = 1.0   # #8 bar default
-    bar_area   = math.pi * bar_dia_in**2 / 4
-    nX = math.ceil(As_X / bar_area)
-    nZ = math.ceil(As_Z / bar_area)
-    sX_in = round((Lz_in - 2*cover_in) / max(nX-1, 1))
-    sZ_in = round((Lx_in - 2*cover_in) / max(nZ-1, 1))
-
-    return dict(
-        Lx_ft=Lx, Lz_ft=Lz,
-        t_in=t_in, d_eff_in=d_eff_in,
-        A_ft2=A, Wf_kip=Wf,
-        q_max=q_max, q_min=q_min, q_avg=q_avg, bearing_ok=bearing_ok,
-        eX_ft=eX, eZ_ft=eZ,
-        Vu2=Vu2, Vc2=Vc2, punch_ok=(Vc2>=Vu2),
-        Vu1x=Vu1x, Vc1x=Vc1x, shear_x_ok=(Vc1x>=Vu1x),
-        Vu1z=Vu1z, Vc1z=Vc1z, shear_z_ok=(Vc1z>=Vu1z),
-        Mu_X_kipft=Mu_X/12, Mu_Z_kipft=Mu_Z/12,
-        As_X=As_X, As_Z=As_Z, nX=nX, nZ=nZ,
-        bar_dia_in=bar_dia_in, bar_no=8,
-        sX_in=sX_in, sZ_in=sZ_in,
-        qu_ksf=qu_ksf,
-    )
+    st.markdown("---")
+    st.markdown("**Resistance Parameters**")
+    mu   = st.number_input("Friction Coeff (μ)", value=0.45, step=0.05)
+    coh  = st.number_input("Cohesion (kip)", value=7.0, step=0.5)
+    Ppx  = st.number_input("Passive Resist X (kip)", value=1.75, step=0.25)
+    Ppz  = st.number_input("Passive Resist Z (kip)", value=2.0, step=0.25)
+    sf_sliding_min = st.number_input("Min SF Sliding", value=1.5, step=0.1)
+    sf_ot_min      = st.number_input("Min SF Overturning", value=1.5, step=0.1)
+    sf_uplift_min  = st.number_input("Min SF Uplift", value=1.5, step=0.1)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SOIL PRESSURE HEATMAP  (ksf)
+# TITLE BANNER
 # ─────────────────────────────────────────────────────────────────────────────
-def fig_heatmap(res, qa_ksf):
-    Lx, Lz = res["Lx_ft"], res["Lz_ft"]
-    qmax, qmin = res["q_max"], res["q_min"]
-    x = np.linspace(-Lx/2, Lx/2, 40)
-    z = np.linspace(-Lz/2, Lz/2, 40)
-    X, _ = np.meshgrid(x, z)
-    Q = (qmax+qmin)/2 + (qmax-qmin)/Lx * X
-
-    fig = go.Figure(go.Heatmap(
-        z=Q, x=x, y=z,
-        colorscale="RdYlGn_r",
-        zmin=max(0, qmin-0.1),
-        zmax=qa_ksf*1.05,
-        colorbar=dict(
-            title=dict(text="q (ksf)", side="right"),
-            tickfont=dict(color="#cfd8dc"),
-        )
-    ))
-    cw2 = res.get("col_w_ft_saved", 0.5)/2
-    fig.add_shape(type="rect", x0=-cw2, y0=-cw2, x1=cw2, y1=cw2,
-        line=dict(color="#ffca28", width=2), fillcolor="rgba(255,202,40,.15)")
-    fig.add_annotation(x=0, y=Lz/2+0.5,
-        text=f"q_max={qmax:.3f} ksf  |  q_allow={qa_ksf:.3f} ksf",
-        showarrow=False, font=dict(color="#fff", size=11))
-    fig.update_layout(
-        title="ASD Soil Contact Pressure (ksf)",
-        xaxis_title="X (ft)", yaxis_title="Z (ft)",
-        paper_bgcolor="#0f1117", plot_bgcolor="#0d1117",
-        font=dict(color="#cfd8dc"), height=380,
-        margin=dict(l=0, r=0, t=40, b=0))
-    return fig
+st.markdown("""
+<div class="title-bar">
+  <div class="subtitle">Structural Engineering</div>
+  <h1>🏗️ Isolated Foundation — Geotechnical Verification</h1>
+  <div class="badge">ASD METHOD · SPREAD FOOTING · SOIL SUPPORTED</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION SKETCH
+# LOAD INPUT
 # ─────────────────────────────────────────────────────────────────────────────
-def fig_section(res, col_w_ft, cover_in):
-    Lx = res["Lx_ft"]
-    t  = res["t_in"] / 12.0
-    cover_ft = cover_in / 12.0
-    d  = res["d_eff_in"] / 12.0
+st.markdown('<div class="sec-header">📥 Load Case Input</div>', unsafe_allow_html=True)
 
-    fig = go.Figure()
-    fig.add_shape(type="rect", x0=-Lx/2, y0=-t, x1=Lx/2, y1=0,
-        fillcolor="#37474f", line=dict(color="#90a4ae", width=1.5))
-    fig.add_shape(type="rect", x0=-col_w_ft/2, y0=0, x1=col_w_ft/2, y1=1.5,
-        fillcolor="#546e7a", line=dict(color="#90a4ae", width=1.5))
-    rebar_y = -(t - cover_ft)
-    fig.add_shape(type="line", x0=-Lx/2+0.1, y0=rebar_y, x1=Lx/2-0.1, y1=rebar_y,
-        line=dict(color="#ef5350", width=1.5, dash="dash"))
-    n = min(9, res["nX"])
-    xs = np.linspace(-Lx/2+0.15, Lx/2-0.15, n)
-    fig.add_trace(go.Scatter(x=xs, y=[rebar_y]*n, mode="markers",
-        marker=dict(symbol="circle", size=10, color="#42a5f5"),
-        name=f"#{res['bar_no']} bars"))
-    fig.add_annotation(x=0, y=-t-0.3, text=f"Lx = {Lx:.2f} ft", xanchor="center",
-        showarrow=False, font=dict(color="#ffca28", size=12))
-    fig.add_annotation(x=Lx/2+0.15, y=-t/2, text=f"t = {res['t_in']}\"",
-        textangle=-90, showarrow=False, font=dict(color="#ffca28", size=11))
-    fig.add_annotation(x=0, y=rebar_y+0.1, text=f"d = {res['d_eff_in']:.1f}\"",
-        xanchor="center", showarrow=False, font=dict(color="#ef5350", size=10))
-    fig.add_shape(type="line", x0=-Lx/2-0.3, y0=0, x1=Lx/2+0.3, y1=0,
-        line=dict(color="#66bb6a", width=2, dash="dot"))
-    fig.add_annotation(x=Lx/2+0.25, y=0.08, text="GL",
-        showarrow=False, font=dict(color="#66bb6a", size=11))
-    fig.update_layout(
-        title="Section Elevation",
-        xaxis=dict(showgrid=False, zeroline=False, range=[-Lx/2-0.6, Lx/2+0.6]),
-        yaxis=dict(showgrid=False, zeroline=False, scaleanchor="x", scaleratio=1,
-                   range=[-t-0.5, 2.0]),
-        paper_bgcolor="#0f1117", plot_bgcolor="#0d1117",
-        font=dict(color="#cfd8dc"), height=400,
-        margin=dict(l=0, r=0, t=40, b=0))
-    return fig
+default_load = "LC-ASD-01\t2.89\t-62.0\t-0.82\t-48.88\t-12.075\t-2.345"
+raw_load = st.text_area(
+    "Paste Load Case · Format: **LC | Fx | Fy | Fz | Mx | My | Mz**",
+    value=default_load, height=68
+)
+
+def parse_load(text):
+    try:
+        p = re.split(r'[ \t,]+', text.strip())
+        return {"LC": p[0], "Fx": float(p[1]), "Fy": float(p[2]), "Fz": float(p[3]),
+                "Mx": float(p[4]), "My": float(p[5]), "Mz": float(p[6])}
+    except:
+        return None
+
+L_DATA = parse_load(raw_load)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PLAN VIEW
+# CORE ENGINEERING CALCULATIONS
 # ─────────────────────────────────────────────────────────────────────────────
-def fig_plan(res, cover_in):
-    Lx, Lz = res["Lx_ft"], res["Lz_ft"]
-    cv = cover_in/12.0
-    fig = go.Figure()
-    fig.add_shape(type="rect", x0=-Lx/2, y0=-Lz/2, x1=Lx/2, y1=Lz/2,
-        fillcolor="#37474f", line=dict(color="#90a4ae", width=2))
-    fig.add_shape(type="rect",
-        x0=-Lx/2+cv, y0=-Lz/2+cv, x1=Lx/2-cv, y1=Lz/2-cv,
-        fillcolor="rgba(0,0,0,0)", line=dict(color="#42a5f5", width=1, dash="dot"))
-    # X-dir bars (run along X, spaced in Z)
-    nZ_bars = min(10, res["nZ"])
-    for y_ in np.linspace(-Lz/2+cv, Lz/2-cv, nZ_bars):
-        fig.add_shape(type="line", x0=-Lx/2+cv, y0=y_, x1=Lx/2-cv, y1=y_,
-            line=dict(color="#42a5f5", width=1.5))
-    # Z-dir bars
-    nX_bars = min(10, res["nX"])
-    for x_ in np.linspace(-Lx/2+cv, Lx/2-cv, nX_bars):
-        fig.add_shape(type="line", x0=x_, y0=-Lz/2+cv, x1=x_, y1=Lz/2-cv,
-            line=dict(color="#ef5350", width=1.5))
-    # column
-    fig.add_shape(type="rect", x0=-0.25, y0=-0.25, x1=0.25, y1=0.25,
-        fillcolor="#546e7a", line=dict(color="#ffca28", width=2))
-    fig.add_annotation(x=0, y=Lz/2+0.35, text=f"Lz = {Lz:.2f} ft",
-        showarrow=False, font=dict(color="#ffca28", size=12))
-    fig.add_annotation(x=Lx/2+0.3, y=0, text=f"Lx = {Lx:.2f} ft",
-        showarrow=False, textangle=-90, font=dict(color="#ffca28", size=12))
-    fig.update_layout(
-        title="Plan View — Bottom Reinforcement  (🔵 X-dir  |  🔴 Z-dir)",
-        xaxis=dict(showgrid=False, zeroline=False, scaleanchor="y", scaleratio=1,
-                   range=[-Lx/2-0.6, Lx/2+0.6]),
-        yaxis=dict(showgrid=False, zeroline=False, range=[-Lz/2-0.6, Lz/2+0.6]),
-        paper_bgcolor="#0f1117", plot_bgcolor="#0d1117",
-        font=dict(color="#cfd8dc"), height=420,
-        margin=dict(l=0, r=0, t=40, b=0))
-    return fig
+if L_DATA:
+    Area_ftg  = Lx * Lz
+    Area_col  = cx * cz
+    Hp        = D - T          # soil/pedestal height above footing base
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────────────────────
-SAMPLE = """Node\tLC\tFX\tFY\tFZ\tMX\tMY\tMZ
-1\t[5-1.1:1.4(DS+DO)+1.2TSEXP]\t-0.01\t1.2\t-0.1\t-1.11\t0.02\t0.55
-\t[5-1.1:1.4(DS+DO)+1.2TSCON]\t0.01\t1.23\t0.14\t1.23\t-0.02\t0.29
-\t[5-2.1:1.2(DS+DO)+1.2TSEXP+1.0TT+1.6L+0.5S]\t2.89\t-0.5\t-0.84\t-7.46\t0.15\t-37.44
-\t[5-2.1:1.2(DS+DO)+1.2TSCON+1.0TT+1.6L+0.5S]\t2.91\t-0.47\t-0.6\t-5.12\t0.1\t-37.71
-\t[5-3.1:1.2(DS+DO)+1.2TSEXP+1.0TT+1.6S+0.5L]\t2.89\t-0.5\t-0.84\t-7.46\t0.15\t-37.44
-\t[5-3.1:1.2(DS+DO)+1.2TSCON+1.0TT+1.6S+0.5L]\t2.91\t-0.47\t-0.6\t-5.12\t0.1\t-37.71
-\t[5-4.1:1.2(DS+DO)+1.2TSEXP+1.0WX+0.5L+0.5S]\t-0.84\t1.03\t-0.1\t-1.12\t0.02\t7.56
-\t[5-5.2:0.9(DS+DO)+1.2TSEXP+1.0WX]\t-0.84\t0.77\t-0.11\t-1.13\t0.02\t7.47
-\t[5-8.1:1.2(DS+DO)+1.2TSEXP+1.2TT+0.5L+0.5S]\t3.47\t-0.81\t-0.99\t-8.72\t0.17\t-45.03
-\t[5-8.1:1.2(DS+DO)+1.2TSCON+1.2TT+0.5L+0.5S]\t3.49\t-0.78\t-0.75\t-6.39\t0.13\t-45.3
-\t[4-1.1:DS+DO+TSEXP]\t-0.01\t0.86\t-0.09\t-0.93\t0.02\t0.41
-\t[4-1.2:DS+DO+TSEXP+TT]\t2.89\t-0.67\t-0.82\t-7.27\t0.15\t-37.53
-\t[4-4.1:DS+DO+TSEXP+0.75TT+0.75L+0.75S]\t2.17\t-0.29\t-0.64\t-5.69\t0.11\t-28.04
-\t[4-5.1:DS+DO+TSEXP+0.6WX]\t-0.51\t0.86\t-0.09\t-0.93\t0.02\t4.65
-\t[4-7.2:0.6(DS+DO)+TSEXP+0.6WX]\t-0.51\t0.51\t-0.09\t-0.95\t0.02\t4.53"""
+    # Self-weights
+    Wt_ftg    = Area_ftg * T * gc
+    Wt_ped    = Area_col * Hp * gc
+    Wt_soil   = (Area_ftg - Area_col) * Hp * gs
+    Wt_total  = Wt_ftg + Wt_ped + Wt_soil
 
-def main():
-    st.markdown("""
-    <h1 style='margin-bottom:0'>🏗️ Foundation Design Tool</h1>
-    <p style='color:#78909c;margin-top:2px;font-size:.92rem'>
-    Paste STAAD Reactions Directly &nbsp;|&nbsp;
-    <span class="lrfd-tag">LRFD 5-</span> Strength Design (ACI 318-19) &nbsp;|&nbsp;
-    <span class="asd-tag">ASD 4-</span> Bearing Check &nbsp;|&nbsp;
-    Units: kip · kip-ft · ft · in · ksf · ksi
-    </p>""", unsafe_allow_html=True)
-    st.divider()
+    # Vertical load at base
+    P_applied = L_DATA['Fy']          # typically negative (compression)
+    P_total   = P_applied + Wt_total  # net downward at base (negative = compression)
 
-    # ── SIDEBAR ──────────────────────────────────────────────────────────────
-    with st.sidebar:
-        st.markdown("## ⚙️ Design Parameters")
-        st.markdown("### 🧱 Materials")
-        fc_ksi = st.number_input("f'c (ksi)",  2.0, 12.0, 4.0, 0.5)
-        fy_ksi = st.number_input("fy  (ksi)", 40.0, 80.0, 60.0, 1.0)
-        gc_pcf = st.number_input("γ concrete (pcf)", 100., 160., 150., 5.)
-        gs_pcf = st.number_input("γ soil     (pcf)",  80., 140., 110., 5.)
-        st.markdown("### 🌍 Soil & Footing")
-        qa_ksf = st.number_input("Allowable Bearing (ksf)", 0.5, 20.0, 3.0, 0.25)
-        Df_ft  = st.number_input("Footing Depth Df (ft)", 1.0, 15.0, 5.0, 0.5)
-        cov_in = st.number_input("Clear Cover (in)", 2.0, 6.0, 3.0, 0.5)
-        st.markdown("### 🏛️ Column")
-        cw_ft  = st.number_input("Column bx (ft)", 0.5, 5.0, 1.5, 0.25)
-        cd_ft  = st.number_input("Column bz (ft)", 0.5, 5.0, 1.5, 0.25)
-        st.divider()
-        st.markdown("""
-        **LC Auto-Classification:**
-        - Prefix **`5-`** → LRFD (strength)
-        - Prefix **`4-`** → ASD (service / bearing)
-        """)
+    # Moments transferred to base (sign convention: amplify by depth)
+    Mx_base = L_DATA['Mx'] + (L_DATA['Fz'] * D)
+    Mz_base = L_DATA['Mz'] + (L_DATA['Fx'] * D)
 
-    # ── TABS ─────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3 = st.tabs([
-        "📋 Load Input + 3D View",
-        "📐 Foundation Sizing",
-        "📊 Results & Drawings"
+    # Section properties
+    Sx = (Lx * Lz**2) / 6    # about X axis  (resists Mx)
+    Sz = (Lz * Lx**2) / 6    # about Z axis  (resists Mz)
+    Ix = (Lx * Lz**3) / 12
+    Iz = (Lz * Lx**3) / 12
+
+    # Eccentricity
+    P_net = abs(P_total)
+    ex = abs(Mx_base) / P_net if P_net > 0 else 0   # eccentricity in X-direction
+    ez = abs(Mz_base) / P_net if P_net > 0 else 0   # eccentricity in Z-direction
+
+    # ── Bearing Pressure (biaxial) ──────────────────────────────────────────
+    q_avg  = P_net / Area_ftg
+    dqx    = abs(Mx_base) / Sx
+    dqz    = abs(Mz_base) / Sz
+
+    # Corner pressures (four corners)
+    corners = {
+        "C1 (+x,+z)": q_avg + dqx + dqz,
+        "C2 (-x,+z)": q_avg + dqx - dqz,
+        "C3 (+x,-z)": q_avg - dqx + dqz,
+        "C4 (-x,-z)": q_avg - dqx - dqz,
+    }
+    q_max = max(corners.values())
+    q_min = min(corners.values())
+    q_ratio = q_max / qa
+
+    # Neutral axis (zero-pressure line intercepts)
+    # q(x,z) = q_avg + Mx_base*z/Ix + Mz_base*x/Iz = 0
+    # X-intercept (z=0): x = -q_avg * Iz / Mz_base
+    # Z-intercept (x=0): z = -q_avg * Ix / Mx_base
+    try:
+        NA_x_intercept = -q_avg * Iz / Mx_base if abs(Mx_base) > 1e-9 else None
+    except:
+        NA_x_intercept = None
+    try:
+        NA_z_intercept = -q_avg * Ix / Mz_base if abs(Mz_base) > 1e-9 else None
+    except:
+        NA_z_intercept = None
+
+    # ── Partial Contact Detection ────────────────────────────────────────────
+    x_lin  = np.linspace(-Lx/2, Lx/2, 80)
+    z_lin  = np.linspace(-Lz/2, Lz/2, 80)
+    X, Z   = np.meshgrid(x_lin, z_lin)
+    Q_raw  = (P_net/Area_ftg) + (Mx_base * Z / Ix) + (Mz_base * X / Iz)
+    Q_field = np.maximum(Q_raw, 0.0)   # uplift = 0 bearing
+
+    contact_area = np.sum(Q_field > 0) / Q_field.size * 100
+    in_full_contact = q_min >= 0
+
+    # Effective vertices (for partial contact diagram)
+    v1_bearing = corners["C1 (+x,+z)"]
+    v2_bearing = corners["C2 (-x,+z)"]
+
+    # ── Stability ────────────────────────────────────────────────────────────
+    # Overturning — per edge
+    Mot_Xleft  = abs(Mx_base)      # overturning moment about left edge (Z+)
+    Mrs_Xleft  = P_net * (Lz / 2) # resisting moment
+    Mot_Xright = abs(Mx_base)
+    Mrs_Xright = P_net * (Lz / 2)
+
+    Mot_Zleft  = abs(Mz_base)
+    Mrs_Zleft  = P_net * (Lx / 2)
+    Mot_Zright = abs(Mz_base)
+    Mrs_Zright = P_net * (Lx / 2)
+
+    SF_ot_Xleft  = Mrs_Xleft  / Mot_Xleft  if Mot_Xleft  > 0 else 99
+    SF_ot_Xright = Mrs_Xright / Mot_Xright if Mot_Xright > 0 else 99
+    SF_ot_Zleft  = Mrs_Zleft  / Mot_Zleft  if Mot_Zleft  > 0 else 99
+    SF_ot_Zright = Mrs_Zright / Mot_Zright if Mot_Zright > 0 else 99
+    SF_ot_min_X  = min(SF_ot_Xleft, SF_ot_Xright)
+    SF_ot_min_Z  = min(SF_ot_Zleft, SF_ot_Zright)
+    SF_ot_overall = min(SF_ot_min_X, SF_ot_min_Z)
+
+    # Sliding
+    F_shear_x  = abs(L_DATA['Fx'])
+    F_shear_z  = abs(L_DATA['Fz'])
+    Adh_x = mu * P_net           # adhesive/friction resistance
+    Adh_z = mu * P_net
+    SR_x  = Adh_x + coh + Ppx   # total sliding resistance X
+    SR_z  = Adh_z + coh + Ppz   # total sliding resistance Z
+    SF_sl_x = SR_x / F_shear_x if F_shear_x > 0 else 99
+    SF_sl_z = SR_z / F_shear_z if F_shear_z > 0 else 99
+    SF_sl_overall = min(SF_sl_x, SF_sl_z)
+
+    # Uplift
+    SF_uplift = Wt_total / abs(P_applied) if P_applied < 0 else 99
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # GEOMETRY CHIPS
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div class="geom-row">
+      <div class="geom-chip"><div class="glabel">Footing Lx</div><div class="gval">{Lx} ft</div></div>
+      <div class="geom-chip"><div class="glabel">Footing Lz</div><div class="gval">{Lz} ft</div></div>
+      <div class="geom-chip"><div class="glabel">Thickness T</div><div class="gval">{T} ft</div></div>
+      <div class="geom-chip"><div class="glabel">Depth D</div><div class="gval">{D} ft</div></div>
+      <div class="geom-chip"><div class="glabel">Col cx×cz</div><div class="gval">{cx}×{cz}</div></div>
+      <div class="geom-chip"><div class="glabel">Area Ftg</div><div class="gval">{Area_ftg:.1f} ft²</div></div>
+      <div class="geom-chip"><div class="glabel">Allow. q</div><div class="gval">{qa} ksf</div></div>
+      <div class="geom-chip"><div class="glabel">Load Case</div><div class="gval">{L_DATA['LC']}</div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EXECUTIVE SUMMARY KPI ROW
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown('<div class="sec-header">🏁 Verification Summary</div>', unsafe_allow_html=True)
+
+    qr  = "pass" if q_ratio <= 1.0 else "fail"
+    slr = "pass" if SF_sl_overall >= sf_sliding_min else "fail"
+    otr = "pass" if SF_ot_overall >= sf_ot_min else "fail"
+    upr = "pass" if SF_uplift >= sf_uplift_min else "fail"
+
+    st.markdown(f"""
+    <div class="kpi-grid">
+      <div class="kpi-card {qr}">
+        <div class="kpi-label">Max Bearing Pressure</div>
+        <div class="kpi-value">{q_max:.3f}</div>
+        <div class="kpi-unit">{p_unit} (Allow. {qa})</div>
+        <div class="kpi-status-{'pass' if qr=='pass' else 'fail'}">{'✓ PASS' if qr=='pass' else '✗ FAIL'} · Ratio {q_ratio:.2f}</div>
+      </div>
+      <div class="kpi-card {slr}">
+        <div class="kpi-label">Sliding Safety Factor</div>
+        <div class="kpi-value">{SF_sl_overall:.2f}</div>
+        <div class="kpi-unit">Min Required {sf_sliding_min}</div>
+        <div class="kpi-status-{'pass' if slr=='pass' else 'fail'}">{'✓ PASS' if slr=='pass' else '✗ FAIL'}</div>
+      </div>
+      <div class="kpi-card {otr}">
+        <div class="kpi-label">Overturning SF</div>
+        <div class="kpi-value">{SF_ot_overall:.2f}</div>
+        <div class="kpi-unit">Min Required {sf_ot_min}</div>
+        <div class="kpi-status-{'pass' if otr=='pass' else 'fail'}">{'✓ PASS' if otr=='pass' else '✗ FAIL'}</div>
+      </div>
+      <div class="kpi-card {upr}">
+        <div class="kpi-label">Uplift SF</div>
+        <div class="kpi-value">{SF_uplift:.2f}</div>
+        <div class="kpi-unit">Min Required {sf_uplift_min}</div>
+        <div class="kpi-status-{'pass' if upr=='pass' else 'fail'}">{'✓ PASS' if upr=='pass' else '✗ FAIL'}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # MAIN TABS
+    # ─────────────────────────────────────────────────────────────────────────
+    tabs = st.tabs([
+        "⚖️ Bearing Capacity",
+        "📐 Stability",
+        "➡️ Sliding",
+        "⬆️ Uplift",
+        "🗺️ Bearing Pressure Diagram",
+        "🧊 3D Force View",
+        "🏗️ Foundation Sketch"
     ])
 
-    # ════════════════════════════════════════════════════════════════════════
-    # TAB 1
-    # ════════════════════════════════════════════════════════════════════════
-    with tab1:
-        sec("① Paste STAAD Reaction Table  (kip / kip-ft)")
-        info("""Copy-paste the full STAAD support reaction output directly — header row included.<br>
-        Format: <code>Node &nbsp; LC &nbsp; FX &nbsp; FY &nbsp; FZ &nbsp; MX &nbsp; MY &nbsp; MZ</code><br>
-        Blank Node cells are fine. Tab or multi-space separated.
-        <span class="lrfd-tag">LRFD</span> auto-detected by prefix <b>5-</b> &nbsp;|&nbsp;
-        <span class="asd-tag">ASD</span> by prefix <b>4-</b>""")
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 1 — BEARING CAPACITY
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[0]:
+        st.markdown('<div class="sec-header">Bearing Capacity — Self-Weight & Soil Pressure</div>', unsafe_allow_html=True)
 
-        paste_txt = st.text_area("Paste STAAD output:", value=SAMPLE, height=260)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**A. Component Self-Weights**")
+            st.latex(rf"W_{{ftg}} = {Lx}\times{Lz}\times{T}\times{gc:.3f} = {Wt_ftg:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"W_{{ped}} = {cx}\times{cz}\times{Hp:.2f}\times{gc:.3f} = {Wt_ped:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"A_{{soil}} = {Area_ftg:.1f} - {Area_col:.1f} = {Area_ftg-Area_col:.1f}\ \mathrm{{{l_unit}}}^2")
+            st.latex(rf"W_{{soil}} = {Area_ftg-Area_col:.1f}\times{Hp:.2f}\times{gs:.3f} = {Wt_soil:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"\Sigma W = {Wt_total:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"P_{{total}} = {P_applied:.2f} + {Wt_total:.2f} = {P_total:.2f}\ \mathrm{{{f_unit}}}")
 
-        col_up, col_btn = st.columns([2,1])
-        with col_up:
-            uploaded = st.file_uploader("OR upload Excel", type=["xlsx","xls"])
-        with col_btn:
-            st.markdown("<br>", unsafe_allow_html=True)
-            parse_btn = st.button("🔄 Parse & Preview Loads")
+        with c2:
+            st.markdown("**B. Base Moments & Eccentricity**")
+            st.latex(rf"M_{{x,base}} = {L_DATA['Mx']:.2f}+({L_DATA['Fz']:.2f}\times{D}) = {Mx_base:.2f}\ \mathrm{{{f_unit}\cdot{l_unit}}}")
+            st.latex(rf"M_{{z,base}} = {L_DATA['Mz']:.2f}+({L_DATA['Fx']:.2f}\times{D}) = {Mz_base:.2f}\ \mathrm{{{f_unit}\cdot{l_unit}}}")
+            st.latex(rf"e_x = \frac{{|M_{{x,base}}|}}{{P_{{net}}}} = \frac{{{abs(Mx_base):.2f}}}{{{P_net:.2f}}} = {ex:.4f}\ \mathrm{{{l_unit}}}")
+            st.latex(rf"e_z = \frac{{|M_{{z,base}}|}}{{P_{{net}}}} = \frac{{{abs(Mz_base):.2f}}}{{{P_net:.2f}}} = {ez:.4f}\ \mathrm{{{l_unit}}}")
 
-        if parse_btn or "df" not in st.session_state:
-            df_parsed = None
-            if uploaded:
-                try:
-                    df_parsed = add_type(parse_excel(uploaded))
-                except Exception as e:
-                    st.error(f"Excel error: {e}")
-            if df_parsed is None and paste_txt.strip():
-                raw = parse_staad_paste(paste_txt)
-                if raw is not None:
-                    df_parsed = add_type(raw)
-            if df_parsed is not None and len(df_parsed) > 0:
-                st.session_state["df"] = df_parsed
+        st.markdown("**C. Section Properties**")
+        c1b, c2b, c3b, c4b = st.columns(4)
+        with c1b: st.latex(rf"S_x=\frac{{L_x L_z^2}}{{6}}={Sx:.2f}\ \mathrm{{{l_unit}^3}}")
+        with c2b: st.latex(rf"S_z=\frac{{L_z L_x^2}}{{6}}={Sz:.2f}\ \mathrm{{{l_unit}^3}}")
+        with c3b: st.latex(rf"I_x=\frac{{L_x L_z^3}}{{12}}={Ix:.2f}\ \mathrm{{{l_unit}^4}}")
+        with c4b: st.latex(rf"I_z=\frac{{L_z L_x^3}}{{12}}={Iz:.2f}\ \mathrm{{{l_unit}^4}}")
+
+        st.markdown("**D. Corner Bearing Pressures**")
+        st.latex(rf"q = \frac{{P_{{net}}}}{{A}} \pm \frac{{M_x}}{{S_x}} \pm \frac{{M_z}}{{S_z}} = \frac{{{P_net:.2f}}}{{{Area_ftg:.1f}}} \pm \frac{{{abs(Mx_base):.2f}}}{{{Sx:.2f}}} \pm \frac{{{abs(Mz_base):.2f}}}{{{Sz:.2f}}}")
+
+        corner_df = pd.DataFrame([
+            {"Corner": k, "Bearing Pressure (ksf)": round(v, 4),
+             "Status": "✓ OK" if v <= qa else "✗ EXCEEDS",
+             "Ratio": round(v/qa, 3)}
+            for k, v in corners.items()
+        ])
+        st.markdown(corner_df.to_html(index=False, classes="eng-table"), unsafe_allow_html=True)
+
+        ci = "pass" if q_min >= 0 else "fail"
+        st.markdown(f"""<div class="alert-{'pass' if q_min >= 0 else 'info'}">
+            {'✅ Full contact — entire footing in compression' if q_min >= 0
+             else f'⚠️ Partial contact — {contact_area:.1f}% footing area effective. Neutral axis detected.'}
+        </div>""", unsafe_allow_html=True)
+
+        # Summary row
+        st.markdown(f"""
+        <div class="math-panel">
+          <div class="label">Bearing Capacity Result</div>
+          <div class="formula">q_max = {q_max:.4f} {p_unit}</div>
+          <div class="formula">q_min = {q_min:.4f} {p_unit}</div>
+          <div class="formula">Allowable q_a = {qa} {p_unit}</div>
+          <div class="result">Utilisation Ratio = {q_ratio:.3f} → {'PASS ✓' if q_ratio <= 1.0 else 'FAIL ✗'}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 2 — STABILITY
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[1]:
+        st.markdown('<div class="sec-header">Overturning Stability</div>', unsafe_allow_html=True)
+
+        st.markdown("**Overturning & Resisting Moments — All Edges**")
+
+        ot_df = pd.DataFrame([
+            {"Direction": "X Dir – Left Edge",  "OT Moment (kip-ft)": round(Mot_Xleft,3),  "Resist Moment (kip-ft)": round(Mrs_Xleft,3),  "SF": round(SF_ot_Xleft,4),  "Status": "✓ PASS" if SF_ot_Xleft>=sf_ot_min else "✗ FAIL"},
+            {"Direction": "X Dir – Right Edge", "OT Moment (kip-ft)": round(Mot_Xright,3), "Resist Moment (kip-ft)": round(Mrs_Xright,3), "SF": round(SF_ot_Xright,4), "Status": "✓ PASS" if SF_ot_Xright>=sf_ot_min else "✗ FAIL"},
+            {"Direction": "Z Dir – Left Edge",  "OT Moment (kip-ft)": round(Mot_Zleft,3),  "Resist Moment (kip-ft)": round(Mrs_Zleft,3),  "SF": round(SF_ot_Zleft,4),  "Status": "✓ PASS" if SF_ot_Zleft>=sf_ot_min else "✗ FAIL"},
+            {"Direction": "Z Dir – Right Edge", "OT Moment (kip-ft)": round(Mot_Zright,3), "Resist Moment (kip-ft)": round(Mrs_Zright,3), "SF": round(SF_ot_Zright,4), "Status": "✓ PASS" if SF_ot_Zright>=sf_ot_min else "✗ FAIL"},
+        ])
+        st.markdown(ot_df.to_html(index=False, classes="eng-table"), unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.latex(rf"SF_{{OT,X}} = \min({SF_ot_Xleft:.4f},\ {SF_ot_Xright:.4f}) = {SF_ot_min_X:.4f}")
+            st.latex(rf"SF_{{OT,Z}} = \min({SF_ot_Zleft:.4f},\ {SF_ot_Zright:.4f}) = {SF_ot_min_Z:.4f}")
+            st.latex(rf"SF_{{OT,governing}} = \min({SF_ot_min_X:.4f},\ {SF_ot_min_Z:.4f}) = {SF_ot_overall:.4f}")
+        with c2:
+            st.markdown(f"""
+            <div class="math-panel">
+              <div class="label">Min Stability Ratio · X Dir</div>
+              <div class="result">{SF_ot_min_X:.4f} → {'PASS ✓' if SF_ot_min_X>=sf_ot_min else 'FAIL ✗'}</div>
+              <div class="label" style="margin-top:10px">Min Stability Ratio · Z Dir</div>
+              <div class="result">{SF_ot_min_Z:.4f} → {'PASS ✓' if SF_ot_min_Z>=sf_ot_min else 'FAIL ✗'}</div>
+              <div class="label" style="margin-top:10px">Net Allowable Stability Ratio</div>
+              <div class="result">{sf_ot_min}</div>
+            </div>""", unsafe_allow_html=True)
+
+        # Bar chart
+        ot_fig = go.Figure()
+        dirs  = ["OT X-Left", "OT X-Right", "OT Z-Left", "OT Z-Right"]
+        sfs   = [SF_ot_Xleft, SF_ot_Xright, SF_ot_Zleft, SF_ot_Zright]
+        colors = ["#4ade80" if v >= sf_ot_min else "#f87171" for v in sfs]
+        ot_fig.add_trace(go.Bar(x=dirs, y=sfs, marker_color=colors, text=[f"{v:.2f}" for v in sfs], textposition="outside"))
+        ot_fig.add_hline(y=sf_ot_min, line_dash="dash", line_color="#fbbf24", annotation_text=f"Min SF={sf_ot_min}")
+        ot_fig.update_layout(template="plotly_dark", paper_bgcolor="#131b2e", plot_bgcolor="#131b2e",
+                             title="Overturning Safety Factors by Edge", height=350,
+                             yaxis_title="Safety Factor", showlegend=False)
+        st.plotly_chart(ot_fig, use_container_width=True)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 3 — SLIDING
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[2]:
+        st.markdown('<div class="sec-header">Sliding Resistance</div>', unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**X-Direction Sliding**")
+            st.latex(rf"V_x = {F_shear_x:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"R_{{adhesion,x}} = \mu \cdot P_{{net}} = {mu}\times{P_net:.2f} = {Adh_x:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"R_{{cohesion,x}} = {coh:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"R_{{passive,x}} = {Ppx:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"SR_x = {Adh_x:.2f}+{coh:.2f}+{Ppx:.2f} = {SR_x:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"SF_{{sliding,x}} = \frac{{{SR_x:.2f}}}{{{F_shear_x:.2f}}} = {SF_sl_x:.4f}")
+
+        with c2:
+            st.markdown("**Z-Direction Sliding**")
+            st.latex(rf"V_z = {F_shear_z:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"R_{{adhesion,z}} = \mu \cdot P_{{net}} = {mu}\times{P_net:.2f} = {Adh_z:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"R_{{cohesion,z}} = {coh:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"R_{{passive,z}} = {Ppz:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"SR_z = {Adh_z:.2f}+{coh:.2f}+{Ppz:.2f} = {SR_z:.2f}\ \mathrm{{{f_unit}}}")
+            st.latex(rf"SF_{{sliding,z}} = \frac{{{SR_z:.2f}}}{{{F_shear_z:.2f}}} = {SF_sl_z:.4f}")
+
+        sl_df = pd.DataFrame([
+            {"Direction": "X", "Shear (kip)": round(F_shear_x,2), "Adhesion (kip)": round(Adh_x,2),
+             "Cohesion (kip)": round(coh,2), "Passive (kip)": round(Ppx,2),
+             "Total Resist (kip)": round(SR_x,2), "SF": round(SF_sl_x,4),
+             "Status": "✓ PASS" if SF_sl_x>=sf_sliding_min else "✗ FAIL"},
+            {"Direction": "Z", "Shear (kip)": round(F_shear_z,2), "Adhesion (kip)": round(Adh_z,2),
+             "Cohesion (kip)": round(coh,2), "Passive (kip)": round(Ppz,2),
+             "Total Resist (kip)": round(SR_z,2), "SF": round(SF_sl_z,4),
+             "Status": "✓ PASS" if SF_sl_z>=sf_sliding_min else "✗ FAIL"},
+        ])
+        st.markdown(sl_df.to_html(index=False, classes="eng-table"), unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="math-panel" style="margin-top:14px">
+          <div class="label">Governing Sliding SF</div>
+          <div class="result">SF_sliding = min({SF_sl_x:.4f}, {SF_sl_z:.4f}) = {SF_sl_overall:.4f}
+          → {'PASS ✓' if SF_sl_overall >= sf_sliding_min else 'FAIL ✗'} (Min = {sf_sliding_min})</div>
+        </div>""", unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 4 — UPLIFT
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[3]:
+        st.markdown('<div class="sec-header">Uplift Verification</div>', unsafe_allow_html=True)
+
+        uplift_df = pd.DataFrame([{
+            "Description": L_DATA["LC"],
+            "Uplift SF": round(SF_uplift, 4),
+            "Net Allow. SF": sf_uplift_min,
+            "Applied Axial (kip)": round(P_applied, 2),
+            "Element Self-Wt (kip)": round(Wt_ped, 2),
+            "Self Weight (kip)": round(Wt_ftg, 2),
+            "Soil Self-Wt (kip)": round(Wt_soil, 2),
+            "Total Resist (kip)": round(Wt_total, 2),
+            "Status": "✓ PASS" if SF_uplift >= sf_uplift_min else "✗ FAIL"
+        }])
+        st.markdown(uplift_df.to_html(index=False, classes="eng-table"), unsafe_allow_html=True)
+
+        st.latex(rf"SF_{{uplift}} = \frac{{\Sigma W}}{{|P_{{applied}}|}} = \frac{{{Wt_total:.2f}}}{{{abs(P_applied):.2f}}} = {SF_uplift:.4f}")
+        st.markdown(f"""<div class="{'alert-pass' if SF_uplift >= sf_uplift_min else 'alert-fail'}">
+            {'✅ Uplift PASS' if SF_uplift >= sf_uplift_min else '✗ Uplift FAIL'} — SF = {SF_uplift:.4f} vs. minimum {sf_uplift_min}</div>""",
+            unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 5 — BEARING PRESSURE DIAGRAM (matches reference image)
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[4]:
+        st.markdown('<div class="sec-header">Bearing Pressure Diagram</div>', unsafe_allow_html=True)
+
+        # ── Full 2D bearing pressure plan diagram ──
+        fig_bp = go.Figure()
+
+        # Footing outline
+        fx = [-Lx/2, Lx/2, Lx/2, -Lx/2, -Lx/2]
+        fz = [-Lz/2, -Lz/2, Lz/2, Lz/2, -Lz/2]
+        fig_bp.add_trace(go.Scatter(x=fx, y=fz, mode='lines',
+            line=dict(color='#38bdf8', width=3), name='Footing Perimeter', fill='toself',
+            fillcolor='rgba(56,189,248,0.07)'))
+
+        # Column / pedestal
+        px_c = [-cx/2, cx/2, cx/2, -cx/2, -cx/2]
+        pz_c = [-cz/2, -cz/2, cz/2, cz/2, -cz/2]
+        fig_bp.add_trace(go.Scatter(x=px_c, y=pz_c, mode='lines',
+            line=dict(color='#fbbf24', width=2, dash='dot'), name='Column'))
+
+        # Stress-distribution heatmap overlay
+        fig_bp.add_trace(go.Contour(
+            z=Q_field, x=x_lin, y=z_lin,
+            colorscale=[[0,'rgba(0,0,0,0)'],[0.001,'#1e3a8a'],[0.4,'#3b82f6'],
+                        [0.7,'#fbbf24'],[1.0,'#ef4444']],
+            showscale=True, opacity=0.75,
+            colorbar=dict(title=dict(text=f"q ({p_unit})", side='right'),
+                         tickfont=dict(color='#94a3b8'), titlefont=dict(color='#94a3b8')),
+            contours=dict(showlabels=True, labelfont=dict(size=10, color='white')),
+            name='Bearing Pressure'
+        ))
+
+        # Neutral axis line (zero-pressure boundary)
+        if NA_x_intercept is not None and NA_z_intercept is not None:
+            if abs(NA_x_intercept) <= Lx/2 and abs(NA_z_intercept) <= Lz/2:
+                # clamp to footing boundary
+                na_pts_x = [max(-Lx/2, min(Lx/2, NA_x_intercept)), -Lx/2]
+                na_pts_z = [0.0, NA_z_intercept]
+                fig_bp.add_trace(go.Scatter(x=na_pts_x, y=na_pts_z, mode='lines',
+                    line=dict(color='white', width=2, dash='dash'), name='Neutral Axis'))
+
+        # Corner pressure annotations
+        cx_pts = [ Lx/2, -Lx/2,  Lx/2, -Lx/2]
+        cz_pts = [ Lz/2,  Lz/2, -Lz/2, -Lz/2]
+        cp_vals = [corners["C1 (+x,+z)"], corners["C2 (-x,+z)"],
+                   corners["C3 (+x,-z)"], corners["C4 (-x,-z)"]]
+        for xi, zi, qi in zip(cx_pts, cz_pts, cp_vals):
+            color = "#ef4444" if qi == q_max else "#e2e8f0"
+            fig_bp.add_annotation(x=xi, y=zi, text=f"<b>{qi:.4f}</b>",
+                showarrow=False, font=dict(size=13, color=color),
+                xanchor="center", yanchor="middle",
+                bgcolor="rgba(0,0,0,0.6)", borderpad=3)
+
+        # Load eccentricity dot
+        # eccentricity location: if Mz pushes in +X then ex is negative offset
+        ecc_x = -ez if Mz_base > 0 else ez
+        ecc_z = -ex if Mx_base > 0 else ex
+        fig_bp.add_trace(go.Scatter(x=[ecc_x], y=[ecc_z], mode='markers',
+            marker=dict(color='#4ade80', size=14, symbol='circle',
+                        line=dict(color='white', width=2)),
+            name=f'Load Eccentricity ({ecc_x:.3f}, {ecc_z:.3f})'))
+
+        # Eccentricity annotation lines
+        fig_bp.add_shape(type='line', x0=ecc_x, y0=-Lz/2, x1=ecc_x, y1=Lz/2,
+            line=dict(color='#4ade80', width=1, dash='dash'))
+        fig_bp.add_shape(type='line', x0=-Lx/2, y0=ecc_z, x1=Lx/2, y1=ecc_z,
+            line=dict(color='#4ade80', width=1, dash='dash'))
+
+        # Dimension arrows
+        fig_bp.add_annotation(x=0, y=-Lz/2-0.3, text=f"← {Lx} ft →",
+            showarrow=False, font=dict(size=12, color='#7dd3fc'))
+        fig_bp.add_annotation(x=-Lx/2-0.5, y=0, text=f"{Lz} ft",
+            showarrow=False, font=dict(size=12, color='#7dd3fc'), textangle=-90)
+
+        # Eccentricity dimension
+        fig_bp.add_annotation(
+            x=0, y=Lz/2+0.35,
+            text=f"e_x = {ecc_x:.4f} ft",
+            showarrow=False, font=dict(size=11, color='#4ade80'))
+
+        fig_bp.update_layout(
+            template="plotly_dark", paper_bgcolor="#0f1117", plot_bgcolor="#131b2e",
+            xaxis=dict(title=f"X ({l_unit})", scaleanchor="y", scaleratio=1,
+                       range=[-Lx/2-1, Lx/2+1], showgrid=True, gridcolor="#1e2535",
+                       zeroline=True, zerolinecolor="#334155"),
+            yaxis=dict(title=f"Z ({l_unit})", range=[-Lz/2-1, Lz/2+1],
+                       showgrid=True, gridcolor="#1e2535",
+                       zeroline=True, zerolinecolor="#334155"),
+            height=700, legend=dict(bgcolor="rgba(0,0,0,0.5)", font=dict(color="#e2e8f0")),
+            title=dict(text=f"<b>Bearing Pressure Distribution</b>  ·  {L_DATA['LC']}  ·  "
+                           f"Contact Area = {contact_area:.1f}%",
+                       font=dict(color="#bfdbfe", size=15), x=0.5)
+        )
+        st.plotly_chart(fig_bp, use_container_width=True)
+
+        # Tabular results
+        bcap_df = pd.DataFrame([{
+            "Max q (ksf)": round(q_max, 4),
+            "Min q (ksf)": round(q_min, 4),
+            "V1 Bearing (ksf)": round(v1_bearing, 4),
+            "V2 Bearing (ksf)": round(v2_bearing, 4),
+            "Allow. q (ksf)": qa,
+            "Ecc X (ft)": round(ex, 4),
+            "Ecc Z (ft)": round(ez, 4),
+            "NA Intercept X": round(NA_x_intercept, 4) if NA_x_intercept else "∞",
+            "NA Intercept Z": round(NA_z_intercept, 4) if NA_z_intercept else "∞",
+            "Eff Comp Area (ft²)": round(contact_area/100*Area_ftg, 4),
+            "Contact (%)": round(contact_area, 2),
+        }])
+        st.markdown(bcap_df.T.to_html(header=False, classes="eng-table"), unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 6 — 3D FORCE VIEW
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[5]:
+        st.markdown('<div class="sec-header">3D Applied Load Visualization</div>', unsafe_allow_html=True)
+
+        fig3d = go.Figure()
+
+        # ── Footing slab ──
+        ftg_x = [-Lx/2, Lx/2, Lx/2, -Lx/2, -Lx/2, Lx/2, Lx/2, -Lx/2]
+        ftg_y = [0, 0, 0, 0, -T, -T, -T, -T]
+        ftg_z = [-Lz/2, -Lz/2, Lz/2, Lz/2, -Lz/2, -Lz/2, Lz/2, Lz/2]
+        fig3d.add_trace(go.Mesh3d(
+            x=ftg_x, y=ftg_y, z=ftg_z,
+            i=[0,0,0,1,4,4,4,5], j=[1,2,4,5,5,6,7,6], k=[2,3,5,6,6,7,3,7],
+            color='#1e40af', opacity=0.45, name='Footing',
+            lighting=dict(ambient=0.6, diffuse=0.8)
+        ))
+
+        # ── Pedestal ──
+        ped_x = [-cx/2, cx/2, cx/2, -cx/2, -cx/2, cx/2, cx/2, -cx/2]
+        ped_y = [0, 0, 0, 0, Hp, Hp, Hp, Hp]
+        ped_z = [-cz/2, -cz/2, cz/2, cz/2, -cz/2, -cz/2, cz/2, cz/2]
+        fig3d.add_trace(go.Mesh3d(
+            x=ped_x, y=ped_y, z=ped_z,
+            i=[0,0,0,1,4,4,4,5], j=[1,2,4,5,5,6,7,6], k=[2,3,5,6,6,7,3,7],
+            color='#475569', opacity=0.85, name='Pedestal',
+            lighting=dict(ambient=0.6, diffuse=0.8)
+        ))
+
+        # ── Soil layer indicator ──
+        fig3d.add_trace(go.Mesh3d(
+            x=ftg_x, y=[0,0,0,0,-Hp,-Hp,-Hp,-Hp], z=ftg_z,
+            i=[0,0,0,1,4,4,4,5], j=[1,2,4,5,5,6,7,6], k=[2,3,5,6,6,7,3,7],
+            color='#854d0e', opacity=0.20, name='Soil', showlegend=True
+        ))
+
+        # ── Helper: draw arrow ──
+        def arrow3d(x0, y0, z0, dx, dy, dz, color, label, scale=1.0):
+            length = math.sqrt(dx**2 + dy**2 + dz**2)
+            if length < 1e-6: return
+            tip_x = x0 + dx * scale
+            tip_y = y0 + dy * scale
+            tip_z = z0 + dz * scale
+            fig3d.add_trace(go.Scatter3d(
+                x=[x0, tip_x], y=[y0, tip_y], z=[z0, tip_z],
+                mode='lines+text',
+                line=dict(color=color, width=8),
+                text=["", f"<b>{label}</b>"],
+                textfont=dict(size=13, color=color),
+                textposition="top center",
+                name=label, showlegend=True
+            ))
+            # Cone as arrowhead
+            fig3d.add_trace(go.Cone(
+                x=[tip_x], y=[tip_y], z=[tip_z],
+                u=[dx/length*0.3], v=[dy/length*0.3], w=[dz/length*0.3],
+                colorscale=[[0, color], [1, color]],
+                showscale=False, sizemode='absolute', sizeref=0.35,
+                name='', showlegend=False
+            ))
+
+        sc = 1.2  # visual scale for arrows
+        top_y = Hp
+
+        # Vertical force Fy (green) — dominant
+        arrow3d(0, top_y, 0,  0, 1, 0, '#4ade80', f"Fy={L_DATA['Fy']:.2f} kip", scale=sc*1.2)
+        # Horizontal Fx (red)
+        arrow3d(0, top_y, 0,  1, 0, 0, '#f87171', f"Fx={L_DATA['Fx']:.2f} kip", scale=sc)
+        # Horizontal Fz (blue)
+        arrow3d(0, top_y, 0,  0, 0, 1, '#60a5fa', f"Fz={L_DATA['Fz']:.2f} kip", scale=sc)
+
+        # Moment arcs (represented as curved annotations using scatter3d rings)
+        def moment_ring(axis, center_y, radius, color, label, n=40):
+            theta = np.linspace(0, 1.5*np.pi, n)
+            if axis == 'x':
+                rx = np.zeros(n)
+                ry = center_y + radius * np.sin(theta)
+                rz = radius * np.cos(theta)
+            elif axis == 'z':
+                rx = radius * np.cos(theta)
+                ry = center_y + radius * np.sin(theta)
+                rz = np.zeros(n)
             else:
-                st.error("Could not parse — check format.")
+                rx = radius * np.cos(theta)
+                ry = center_y * np.ones(n)
+                rz = radius * np.sin(theta)
+            fig3d.add_trace(go.Scatter3d(
+                x=rx, y=ry, z=rz, mode='lines',
+                line=dict(color=color, width=5, dash='dash'),
+                name=label, showlegend=True
+            ))
 
-        if "df" in st.session_state:
-            df = st.session_state["df"]
-            lrfd_n = (df["Type"]=="LRFD").sum()
-            asd_n  = (df["Type"]=="ASD").sum()
-            c1,c2,c3 = st.columns(3)
-            mcard("Total LCs",  str(len(df)), c1)
-            mcard("LRFD", str(lrfd_n), c2)
-            mcard("ASD",  str(asd_n),  c3)
+        moment_ring('x', top_y/2, 0.7, '#a78bfa', f"Mx={L_DATA['Mx']:.2f} kip·ft")
+        moment_ring('z', top_y/2, 0.7, '#fb923c', f"Mz={L_DATA['Mz']:.2f} kip·ft")
 
-            sec("Parsed Load Table  (kip / kip-ft)")
-            def style_type(val):
-                if val=="LRFD": return "background:#0d3b6e;color:#90caf9"
-                return "background:#0d3b1e;color:#a5d6a7"
-            disp = df[["LC","Type","FX","FY","FZ","MX","MY","MZ"]]
-            st.dataframe(
-                disp.style.applymap(style_type, subset=["Type"])
-                          .format({c:"{:.3f}" for c in ["FX","FY","FZ","MX","MY","MZ"]}),
-                use_container_width=True, height=300)
+        # Ground plane grid
+        gx, gz = np.meshgrid(np.linspace(-Lx/2, Lx/2, 6), np.linspace(-Lz/2, Lz/2, 6))
+        fig3d.add_trace(go.Surface(
+            x=gx, z=gz, y=np.full_like(gx, -T),
+            colorscale=[[0,'#1e3a5f'],[1,'#1e3a5f']],
+            opacity=0.35, showscale=False, name='Soil Base'
+        ))
 
-            st.divider()
-            sec("② 3D Load Visualisation  (ft geometry)")
-            Lx_pre = max(Lx_pre if "Lx_pre" in dir() else 0,
-                         st.session_state.get("res",{}).get("Lx_ft",10.0))
-            Lz_pre = st.session_state.get("res",{}).get("Lz_ft", Lx_pre)
-            info("🔴 Thick = LRFD critical &nbsp;|&nbsp; 🟡 Thick = ASD critical &nbsp;|&nbsp; "
-                 "Dotted arcs = governing moments.  All arrows at column top.")
-            st.plotly_chart(fig_3d(df, Lx_pre or 10.0, Lz_pre or 10.0, cw_ft, cd_ft),
-                            use_container_width=True)
+        # Dimension labels
+        fig3d.add_trace(go.Scatter3d(
+            x=[0], y=[-T/2], z=[Lz/2+0.3],
+            mode='text', text=[f"Lz={Lz}ft"],
+            textfont=dict(size=12, color='#7dd3fc'), showlegend=False
+        ))
+        fig3d.add_trace(go.Scatter3d(
+            x=[Lx/2+0.3], y=[-T/2], z=[0],
+            mode='text', text=[f"Lx={Lx}ft"],
+            textfont=dict(size=12, color='#7dd3fc'), showlegend=False
+        ))
+        fig3d.add_trace(go.Scatter3d(
+            x=[-Lx/2-0.5], y=[Hp/2], z=[0],
+            mode='text', text=[f"D={D}ft"],
+            textfont=dict(size=12, color='#7dd3fc'), showlegend=False
+        ))
 
-            # Envelope bar chart
-            st.divider()
-            sec("Load Envelope — All Combinations")
-            fig_env = go.Figure()
-            for comp, clr in [("FY","#42a5f5"),("MZ","#ef5350"),("MX","#ab47bc")]:
-                for typ, op in [("LRFD",0.85),("ASD",0.45)]:
-                    sub = df[df["Type"]==typ]
-                    fig_env.add_trace(go.Bar(
-                        x=sub["LC"], y=sub[comp].abs(),
-                        name=f"{typ} |{comp}|", marker_color=clr, opacity=op,
-                        visible=True if comp=="FY" else "legendonly"))
-            fig_env.update_layout(barmode="group",
-                paper_bgcolor="#0f1117", plot_bgcolor="#0d1117",
-                font=dict(color="#cfd8dc"), height=320,
-                xaxis=dict(tickangle=-45, tickfont=dict(size=8)),
-                legend=dict(bgcolor="#13192b"),
-                margin=dict(l=0,r=0,t=20,b=80))
-            st.plotly_chart(fig_env, use_container_width=True)
+        fig3d.update_layout(
+            template='plotly_dark', paper_bgcolor='#0f1117',
+            scene=dict(
+                bgcolor='#0f1117',
+                xaxis=dict(title='X (ft)', gridcolor='#1e2535', showbackground=False),
+                yaxis=dict(title='Y (ft)', gridcolor='#1e2535', showbackground=False),
+                zaxis=dict(title='Z (ft)', gridcolor='#1e2535', showbackground=False),
+                aspectmode='data',
+                camera=dict(eye=dict(x=1.8, y=1.4, z=1.5))
+            ),
+            legend=dict(bgcolor='rgba(0,0,0,0.5)', font=dict(color='#e2e8f0', size=11)),
+            height=680,
+            title=dict(text=f"<b>3D Foundation — Applied Forces & Moments</b> · {L_DATA['LC']}",
+                       font=dict(color='#bfdbfe', size=15), x=0.5)
+        )
+        st.plotly_chart(fig3d, use_container_width=True)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # TAB 2
-    # ════════════════════════════════════════════════════════════════════════
-    with tab2:
-        sec("③ Critical Combo Selection & Foundation Sizing")
-        if "df" not in st.session_state:
-            st.warning("Parse loads in Tab 1 first.")
-        else:
-            df = st.session_state["df"]
-            lrfd_r, asd_r = critical_combos(df)
+        # Load summary table
+        load_df = pd.DataFrame([{
+            "LC": L_DATA['LC'],
+            "Fx (kip)": L_DATA['Fx'], "Fy (kip)": L_DATA['Fy'], "Fz (kip)": L_DATA['Fz'],
+            "Mx (kip-ft)": L_DATA['Mx'], "My (kip-ft)": L_DATA['My'], "Mz (kip-ft)": L_DATA['Mz']
+        }])
+        st.markdown(load_df.to_html(index=False, classes="eng-table"), unsafe_allow_html=True)
 
-            c1,c2 = st.columns(2)
-            with c1:
-                st.markdown('<span class="lrfd-tag">LRFD — Strength Design</span>',
-                            unsafe_allow_html=True)
-                if lrfd_r is not None:
-                    info(f"<b>{lrfd_r['LC']}</b><br>"
-                         f"Fy={float(lrfd_r['FY']):.3f} kip &nbsp;|&nbsp; "
-                         f"Fx={float(lrfd_r['FX']):.3f} kip &nbsp;|&nbsp; "
-                         f"Fz={float(lrfd_r['FZ']):.3f} kip<br>"
-                         f"Mx={float(lrfd_r['MX']):.3f} kip-ft &nbsp;|&nbsp; "
-                         f"Mz={float(lrfd_r['MZ']):.3f} kip-ft")
-                else:
-                    st.warning("No LRFD combos detected.")
-            with c2:
-                st.markdown('<span class="asd-tag">ASD — Bearing Check</span>',
-                            unsafe_allow_html=True)
-                if asd_r is not None:
-                    info(f"<b>{asd_r['LC']}</b><br>"
-                         f"Fy={float(asd_r['FY']):.3f} kip &nbsp;|&nbsp; "
-                         f"Fx={float(asd_r['FX']):.3f} kip &nbsp;|&nbsp; "
-                         f"Fz={float(asd_r['FZ']):.3f} kip<br>"
-                         f"Mx={float(asd_r['MX']):.3f} kip-ft &nbsp;|&nbsp; "
-                         f"Mz={float(asd_r['MZ']):.3f} kip-ft")
-                else:
-                    st.warning("No ASD combos detected.")
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 7 — FOUNDATION SKETCH (Elevation + Plan)
+    # ═══════════════════════════════════════════════════════════════════════
+    with tabs[6]:
+        st.markdown('<div class="sec-header">Foundation Engineering Sketch — Elevation & Plan</div>', unsafe_allow_html=True)
 
-            info(f"Self-weight = γ_c ({gc_pcf} pcf) × Lx × Lz × Df ({Df_ft} ft) — "
-                 f"automatically added to ASD vertical load for bearing check.")
+        fig_sk = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=("Footing Elevation View", "Footing Plan View (Top)"),
+            horizontal_spacing=0.12
+        )
+        # ── Elevation ──
+        # Ground line
+        fig_sk.add_shape(type='line', x0=-Lx/2-0.5, y0=0, x1=Lx/2+0.5, y1=0,
+            line=dict(color='#6b7280', width=2, dash='dot'), row=1, col=1)
 
-            if st.button("🔩 Run Foundation Sizing — ACI 318-19"):
-                if lrfd_r is None or asd_r is None:
-                    st.error("Need both LRFD and ASD combos.")
-                else:
-                    with st.spinner("Computing..."):
-                        res = size_footing(
-                            P_ult_kip=float(lrfd_r["FY"]),
-                            Mx_ult_kipft=float(lrfd_r["MX"]),
-                            Mz_ult_kipft=float(lrfd_r["MZ"]),
-                            P_svc_kip=float(asd_r["FY"]),
-                            Mx_svc_kipft=float(asd_r["MX"]),
-                            Mz_svc_kipft=float(asd_r["MZ"]),
-                            qa_ksf=qa_ksf, fc_ksi=fc_ksi, fy_ksi=fy_ksi,
-                            cover_in=cov_in, col_w_ft=cw_ft, col_d_ft=cd_ft,
-                            Df_ft=Df_ft, gc_pcf=gc_pcf, gs_pcf=gs_pcf)
-                        res["col_w_ft_saved"] = cw_ft
-                        st.session_state["res"] = res
-                        st.success("✓ Sizing complete — see Results tab")
+        # Footing rectangle (elevation)
+        fig_sk.add_shape(type='rect', x0=-Lx/2, y0=-T, x1=Lx/2, y1=0,
+            line=dict(color='#38bdf8', width=2), fillcolor='rgba(56,189,248,0.15)', row=1, col=1)
 
-            if "res" in st.session_state:
-                res = st.session_state["res"]
-                st.divider()
-                sec("📏 Footing Dimensions")
-                c1,c2,c3,c4 = st.columns(4)
-                mcard("Length Lx",    f"{res['Lx_ft']:.2f} ft", c1)
-                mcard("Width Lz",     f"{res['Lz_ft']:.2f} ft", c2)
-                mcard("Thickness",    f"{res['t_in']}\"",        c3)
-                mcard("d effective",  f"{res['d_eff_in']:.1f}\"", c4)
-                sec("⚖️ Bearing (ASD + Self-Weight)")
-                c1,c2,c3,c4 = st.columns(4)
-                mcard("Footing Wt",   f"{res['Wf_kip']:.2f} kip",  c1)
-                mcard("q max",        f"{res['q_max']:.3f} ksf",    c2)
-                mcard("q allow",      f"{qa_ksf:.3f} ksf",          c3)
-                mcard("eX / eZ",      f"{res['eX_ft']:.2f} / {res['eZ_ft']:.2f} ft", c4)
+        # Pedestal rectangle (elevation)
+        fig_sk.add_shape(type='rect', x0=-cx/2, y0=0, x1=cx/2, y1=Hp,
+            line=dict(color='#fbbf24', width=2), fillcolor='rgba(251,191,36,0.2)', row=1, col=1)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # TAB 3
-    # ════════════════════════════════════════════════════════════════════════
-    with tab3:
-        sec("④ Detailed Results, Drawings & Export")
-        if "res" not in st.session_state:
-            st.warning("Run sizing in Tab 2 first.")
-        else:
-            res = st.session_state["res"]
+        # Soil hatch (elevation)
+        for yh in np.arange(-T+T/8, 0, T/5):
+            fig_sk.add_shape(type='line', x0=-Lx/2, y0=yh, x1=Lx/2, y1=yh,
+                line=dict(color='#854d0e', width=0.5, dash='dot'), row=1, col=1)
 
-            # Code checks table
-            sec("✅ ACI 318-19 Code Checks")
-            checks = [
-                ("Bearing Pressure (ASD)",    res["q_max"],  qa_ksf,      "ksf", res["bearing_ok"]),
-                ("Two-Way Punching (LRFD)",   res["Vu2"],    res["Vc2"],   "kip", res["punch_ok"]),
-                ("One-Way Shear — X (LRFD)",  res["Vu1x"],   res["Vc1x"],  "kip", res["shear_x_ok"]),
-                ("One-Way Shear — Z (LRFD)",  res["Vu1z"],   res["Vc1z"],  "kip", res["shear_z_ok"]),
-            ]
-            rows = []
-            for name, D, C, unit, ok in checks:
-                rows.append({"Check": name,
-                    "Demand": f"{D:.3f} {unit}",
-                    "Capacity φVc": f"{C:.3f} {unit}",
-                    "D/C Ratio": f"{D/(C+1e-9):.3f}",
-                    "Status": "PASS ✓" if ok else "FAIL ✗"})
-            ck_df = pd.DataFrame(rows)
-            def hl(row):
-                c = "#1b5e20" if "PASS" in row["Status"] else "#b71c1c"
-                return [""]*4 + [f"background:{c};color:#fff;font-weight:700"]
-            st.dataframe(ck_df.style.apply(hl, axis=1),
-                         use_container_width=True, hide_index=True)
+        # Grade elevation hatch
+        for xh in np.arange(-Lx/2-0.5, Lx/2+0.6, 0.4):
+            fig_sk.add_shape(type='line', x0=xh, y0=0, x1=xh-0.2, y1=-0.2,
+                line=dict(color='#6b7280', width=1), row=1, col=1)
 
-            sec("🔩 Reinforcement Schedule")
-            c1,c2,c3,c4 = st.columns(4)
-            mcard("Bars — X dir",  f"{res['nX']} × #{res['bar_no']}",  c1)
-            mcard("Spacing X",     f"@ {res['sX_in']}\"",              c2)
-            mcard("Bars — Z dir",  f"{res['nZ']} × #{res['bar_no']}",  c3)
-            mcard("Spacing Z",     f"@ {res['sZ_in']}\"",              c4)
-            info(f"Bottom mat (LRFD flexure): "
-                 f"#{res['bar_no']} @ {res['sX_in']}\" (X-dir), As={res['As_X']:.2f} in²  |  "
-                 f"#{res['bar_no']} @ {res['sZ_in']}\" (Z-dir), As={res['As_Z']:.2f} in²  |  "
-                 f"Cover={cov_in}\"  |  Mu_X={res['Mu_X_kipft']:.2f} kip-ft  |  "
-                 f"Mu_Z={res['Mu_Z_kipft']:.2f} kip-ft")
+        # Dimension annotations — elevation
+        # Width dimension
+        fig_sk.add_annotation(x=0, y=-T-0.3, text=f"← {Lx} ft →",
+            showarrow=False, font=dict(size=11, color='#7dd3fc'), row=1, col=1)
+        # Depth
+        fig_sk.add_annotation(x=Lx/2+0.6, y=-T/2, text=f"{T} ft",
+            showarrow=False, font=dict(size=11, color='#7dd3fc'), textangle=-90, row=1, col=1)
+        # Soil cover
+        fig_sk.add_annotation(x=Lx/2+0.6, y=Hp/2, text=f"Soil Cover\n{Hp:.1f} ft",
+            showarrow=False, font=dict(size=10, color='#a3a3a3'), row=1, col=1)
+        # GL label
+        fig_sk.add_annotation(x=-Lx/2-0.3, y=0.1, text="GL. EL. 0 ft",
+            showarrow=False, font=dict(size=9, color='#6b7280'), row=1, col=1)
 
-            # Drawings
-            st.divider()
-            cl, cr = st.columns(2)
-            with cl: st.plotly_chart(fig_heatmap(res, qa_ksf), use_container_width=True)
-            with cr: st.plotly_chart(fig_section(res, cw_ft, cov_in), use_container_width=True)
-            st.plotly_chart(fig_plan(res, cov_in), use_container_width=True)
+        # Force arrows on elevation
+        asc = Hp * 0.4
+        # Fy arrow
+        fig_sk.add_shape(type='line', x0=0, y0=Hp+asc, x1=0, y1=Hp,
+            line=dict(color='#4ade80', width=3), row=1, col=1)
+        fig_sk.add_annotation(x=0.3, y=Hp+asc*0.7, text=f"Fy={L_DATA['Fy']:.2f}",
+            showarrow=False, font=dict(size=10, color='#4ade80'), row=1, col=1)
+        # Fx arrow
+        fig_sk.add_shape(type='line', x0=-asc*0.8, y0=Hp, x1=0, y1=Hp,
+            line=dict(color='#f87171', width=3), row=1, col=1)
+        fig_sk.add_annotation(x=-asc*0.9, y=Hp+0.2, text=f"Fx={L_DATA['Fx']:.2f}",
+            showarrow=False, font=dict(size=10, color='#f87171'), row=1, col=1)
 
-            # Final 3D with correct dimensions
-            sec("3D — Final Footing + All Applied Loads")
-            if "df" in st.session_state:
-                st.plotly_chart(
-                    fig_3d(st.session_state["df"],
-                           res["Lx_ft"], res["Lz_ft"], cw_ft, cd_ft),
-                    use_container_width=True)
+        # ── Plan View ──
+        # Footing outline
+        fig_sk.add_shape(type='rect', x0=-Lx/2, y0=-Lz/2, x1=Lx/2, y1=Lz/2,
+            line=dict(color='#38bdf8', width=2.5), fillcolor='rgba(56,189,248,0.10)', row=1, col=2)
 
-            # Export
-            sec("📄 Export Design Report")
-            export = {
-                "Parameter": [
-                    "Lx (ft)", "Lz (ft)", "Thickness (in)", "d effective (in)",
-                    "Plan Area (ft²)", "Footing Self-Weight (kip)",
-                    "q_max ASD (ksf)", "q_min ASD (ksf)", "q_allowable (ksf)",
-                    "Bearing Check (ASD)", "Punching Shear (LRFD)",
-                    "One-Way Shear X (LRFD)", "One-Way Shear Z (LRFD)",
-                    "Mu_X (kip-ft)", "As_X (in²)", "nX bars", "Spacing X (in)",
-                    "Mu_Z (kip-ft)", "As_Z (in²)", "nZ bars", "Spacing Z (in)",
-                    "Bar Size", "Clear Cover (in)",
-                ],
-                "Value": [
-                    res["Lx_ft"], res["Lz_ft"], res["t_in"], round(res["d_eff_in"],2),
-                    round(res["A_ft2"],2), round(res["Wf_kip"],3),
-                    round(res["q_max"],4), round(res["q_min"],4), qa_ksf,
-                    "PASS" if res["bearing_ok"] else "FAIL",
-                    "PASS" if res["punch_ok"]   else "FAIL",
-                    "PASS" if res["shear_x_ok"] else "FAIL",
-                    "PASS" if res["shear_z_ok"] else "FAIL",
-                    round(res["Mu_X_kipft"],3), round(res["As_X"],3), res["nX"], res["sX_in"],
-                    round(res["Mu_Z_kipft"],3), round(res["As_Z"],3), res["nZ"], res["sZ_in"],
-                    f"#{res['bar_no']}", cov_in,
-                ],
-            }
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                pd.DataFrame(export).to_excel(w, index=False, sheet_name="Foundation Design")
-                if "df" in st.session_state:
-                    st.session_state["df"].to_excel(w, index=False, sheet_name="All Load Combos")
-            buf.seek(0)
-            st.download_button("⬇️ Download Full Report (.xlsx)", data=buf,
-                file_name="Foundation_Design_Report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        # Column/pedestal outline
+        fig_sk.add_shape(type='rect', x0=-cx/2, y0=-cz/2, x1=cx/2, y1=cz/2,
+            line=dict(color='#fbbf24', width=2), fillcolor='rgba(251,191,36,0.25)', row=1, col=2)
 
-if __name__ == "__main__":
-    main()
+        # Centreline dashes
+        fig_sk.add_shape(type='line', x0=0, y0=-Lz/2-0.3, x1=0, y1=Lz/2+0.3,
+            line=dict(color='#60a5fa', width=1, dash='dash'), row=1, col=2)
+        fig_sk.add_shape(type='line', x0=-Lx/2-0.3, y0=0, x1=Lx/2+0.3, y1=0,
+            line=dict(color='#60a5fa', width=1, dash='dash'), row=1, col=2)
+
+        # Axis arrows
+        fig_sk.add_annotation(x=Lx/2+0.5, y=0, text="→ X", showarrow=False,
+            font=dict(size=11, color='#60a5fa'), row=1, col=2)
+        fig_sk.add_annotation(x=0, y=Lz/2+0.5, text="↑ Z", showarrow=False,
+            font=dict(size=11, color='#60a5fa'), row=1, col=2)
+
+        # Eccentricity dot (plan)
+        fig_sk.add_trace(go.Scatter(x=[ecc_x], y=[ecc_z], mode='markers',
+            marker=dict(color='#4ade80', size=12, symbol='circle-open',
+                        line=dict(color='#4ade80', width=3)),
+            name='Load Eccentricity'), row=1, col=2)
+
+        # Neutral axis (plan)
+        if NA_x_intercept is not None and abs(NA_x_intercept) <= Lx/2:
+            if NA_z_intercept is not None and abs(NA_z_intercept) <= Lz/2:
+                fig_sk.add_trace(go.Scatter(
+                    x=[NA_x_intercept, -Lx/2], y=[0.0, NA_z_intercept],
+                    mode='lines', line=dict(color='white', width=2, dash='dash'),
+                    name='Neutral Axis'), row=1, col=2)
+
+        # Plan dimensions
+        fig_sk.add_annotation(x=0, y=-Lz/2-0.5, text=f"← {Lx} ft →",
+            showarrow=False, font=dict(size=11, color='#7dd3fc'), row=1, col=2)
+        fig_sk.add_annotation(x=-Lx/2-0.7, y=0, text=f"{Lz} ft",
+            showarrow=False, font=dict(size=11, color='#7dd3fc'), textangle=-90, row=1, col=2)
+
+        # Corner pressure labels (plan)
+        plan_cx = [ Lx/2, -Lx/2,  Lx/2, -Lx/2]
+        plan_cz = [ Lz/2,  Lz/2, -Lz/2, -Lz/2]
+        for xi, zi, qi in zip(plan_cx, plan_cz, cp_vals):
+            clr = "#ef4444" if qi == q_max else "#94a3b8"
+            fig_sk.add_annotation(x=xi, y=zi,
+                text=f"<b>{qi:.3f}</b>",
+                showarrow=False, font=dict(size=11, color=clr),
+                bgcolor="rgba(0,0,0,0.7)", row=1, col=2)
+
+        # Dummy scatter for axes
+        fig_sk.add_trace(go.Scatter(x=[0], y=[0], mode='markers',
+            marker=dict(size=1, color='rgba(0,0,0,0)'), showlegend=False), row=1, col=1)
+
+        fig_sk.update_layout(
+            template='plotly_dark', paper_bgcolor='#0f1117', plot_bgcolor='#131b2e',
+            height=600,
+            title=dict(text=f"<b>Foundation Sketch</b> — F1 · Rectangular · Soil Supported",
+                       font=dict(color='#bfdbfe', size=14), x=0.5),
+            showlegend=True,
+            legend=dict(bgcolor='rgba(0,0,0,0.5)', font=dict(color='#e2e8f0'))
+        )
+
+        # Fix axis ratios
+        fig_sk.update_xaxes(scaleanchor=None, showgrid=True, gridcolor='#1e2535',
+                            zeroline=True, zerolinecolor='#334155', row=1, col=1)
+        fig_sk.update_yaxes(showgrid=True, gridcolor='#1e2535',
+                            zeroline=True, zerolinecolor='#334155', row=1, col=1)
+        fig_sk.update_xaxes(scaleanchor="y2", scaleratio=1, showgrid=True, gridcolor='#1e2535',
+                            zeroline=True, zerolinecolor='#334155', row=1, col=2)
+        fig_sk.update_yaxes(showgrid=True, gridcolor='#1e2535',
+                            zeroline=True, zerolinecolor='#334155', row=1, col=2)
+
+        st.plotly_chart(fig_sk, use_container_width=True)
+
+        # Footing geometry table
+        st.markdown("**Footing Geometry Parameters**")
+        geom_df = pd.DataFrame([{
+            "Name": "F1", "Shape": "Rectangle", "Support": "Soil Supported",
+            "Size X (ft)": Lx, "Size Z (ft)": Lz, "Thickness (ft)": T,
+            "Depth Below Grade (ft)": D, "Soil Cover (ft)": Hp,
+            "Col cx (ft)": cx, "Col cz (ft)": cz,
+            "Allow. Bearing (psf)": int(qa*1000)
+        }])
+        st.markdown(geom_df.to_html(index=False, classes="eng-table"), unsafe_allow_html=True)
+
+else:
+    st.markdown("""
+    <div class="alert-info">
+        ℹ️ Paste a valid load case row above to begin calculations.<br>
+        <b>Format:</b> LC_Name &nbsp;|&nbsp; Fx &nbsp;|&nbsp; Fy &nbsp;|&nbsp; Fz &nbsp;|&nbsp; Mx &nbsp;|&nbsp; My &nbsp;|&nbsp; Mz
+    </div>
+    """, unsafe_allow_html=True)
