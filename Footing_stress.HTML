@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Surcharge Load — Das 8th Ed. Calculator</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0a0c10; --surface:#10141a; --card:#151b24; --border:#1e2a38;
+  --accent:#00b4d8; --accent2:#f77f00; --green:#06d6a0; --red:#ef233c;
+  --yellow:#ffd166; --muted:#4a6580; --text:#cdd6e8; --textdim:#7a92aa;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;min-height:100vh;padding:20px}
+/* ---- HEADER ---- */
+.hdr{display:flex;align-items:center;gap:16px;padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:18px}
+.hdr-title{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;color:var(--accent);letter-spacing:.02em}
+.hdr-sub{color:var(--muted);font-size:.72rem;margin-top:2px}
+.badge{background:rgba(0,180,216,.12);border:1px solid rgba(0,180,216,.3);color:var(--accent);padding:3px 10px;border-radius:20px;font-size:.65rem;font-weight:700;letter-spacing:.08em;white-space:nowrap}
+/* ---- LAYOUT ---- */
+.grid2{display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start}
+.col-right{display:flex;flex-direction:column;gap:16px}
+/* ---- PANELS ---- */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px}
+.ph{font-family:'Syne',sans-serif;font-size:.65rem;font-weight:600;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.ph::before{content:'';display:inline-block;width:3px;height:14px;background:var(--accent);border-radius:2px}
+/* ---- INPUTS ---- */
+.fg{margin-bottom:11px}
+.fg label{display:block;color:var(--muted);font-size:.68rem;margin-bottom:4px;letter-spacing:.05em}
+.fg label em{color:var(--accent2);font-style:normal;font-size:.62rem;margin-left:4px}
+input[type=number],select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.85rem;padding:7px 10px;border-radius:6px;outline:none;transition:border .15s}
+input:focus,select:focus{border-color:var(--accent)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sep{height:1px;background:var(--border);margin:12px 0}
+.ref-tag{font-size:.62rem;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:4px;padding:2px 7px;display:inline-block;margin-top:3px}
+/* ---- BUTTON ---- */
+.btn{width:100%;background:linear-gradient(135deg,var(--accent),#0077b6);color:#fff;border:none;padding:11px;border-radius:8px;font-family:'Syne',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;margin-top:8px;transition:opacity .15s}
+.btn:hover{opacity:.88}
+/* ---- DIAGRAM ---- */
+#cvDiag{width:100%;border-radius:8px;display:block}
+/* ---- VERDICT ---- */
+.verdict{border-radius:8px;padding:12px 16px;font-size:.8rem;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:10px;letter-spacing:.02em}
+.v-ok{background:rgba(6,214,160,.08);border:1px solid var(--green);color:var(--green)}
+.v-warn{background:rgba(255,209,102,.08);border:1px solid var(--yellow);color:var(--yellow)}
+.v-fail{background:rgba(239,35,60,.08);border:1px solid var(--red);color:var(--red)}
+/* ---- KPI GRID ---- */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.kpi{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 10px;text-align:center}
+.kpi .v{font-family:'Syne',sans-serif;font-size:1.25rem;font-weight:800;margin-bottom:2px}
+.kpi .u{font-size:.6rem;color:var(--muted);margin-bottom:3px}
+.kpi .l{font-size:.63rem;color:var(--muted)}
+/* ---- FORCE TABLE ---- */
+.ftbl{width:100%;border-collapse:collapse;font-size:.75rem;margin-bottom:14px}
+.ftbl th{background:var(--bg);color:var(--accent);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)}
+.ftbl td{padding:7px 10px;border-bottom:1px solid rgba(30,42,56,.6);color:var(--text)}
+.ftbl tr:last-child td{border-bottom:none}
+.ftbl .hi{color:var(--accent2);font-weight:700}
+.ftbl .ok{color:var(--green)}
+.ftbl .ng{color:var(--red)}
+/* ---- STEPS ---- */
+.steps-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:.73rem;line-height:1.95;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow-y:auto}
+.steps-box::-webkit-scrollbar{width:4px}
+.steps-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.sec{color:var(--accent);font-weight:700}
+.eq{color:#90e0ef}
+.vv{color:var(--green);font-weight:600}
+.ww{color:var(--yellow)}
+.nn{color:var(--muted);font-style:italic}
+.rr{color:var(--red);font-weight:600}
+/* ---- CHART ---- */
+canvas#sweep{width:100%;border-radius:8px;display:block}
+/* ---- RESPONSIVE ---- */
+@media(max-width:860px){.grid2{grid-template-columns:1fr}.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-title">Surcharge → Foundation Stress & Force Calculator</div>
+    <div class="hdr-sub">Boussinesq Elastic Theory · Das, B.M. Principles of Foundation Engineering, 8th Ed.</div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <span class="badge">Das Ch. 6</span>
+    <span class="badge">Das Ch. 12</span>
+    <span class="badge">NAVFAC DM-7.2</span>
+  </div>
+</div>
+
+<div class="grid2">
+<!-- ===== LEFT INPUTS ===== -->
+<div style="display:flex;flex-direction:column;gap:14px">
+
+  <div class="panel">
+    <div class="ph">Geometry</div>
+    <div class="fg"><label>Embedment depth to top of footing, z₁ <em>[ft]</em></label><input type="number" id="z1" value="3" step="0.25" min="0.1"></div>
+    <div class="fg"><label>Foundation thickness (depth), D_f <em>[ft]</em></label><input type="number" id="Df" value="1" step="0.25" min="0.1"></div>
+    <div class="sep"></div>
+    <div class="fg"><label>Footing length, L <em>[ft]  (parallel to rail/load)</em></label><input type="number" id="Lf" value="4" step="0.25" min="0.1"></div>
+    <div class="fg"><label>Footing width, B <em>[ft]  (perpendicular to rail)</em></label><input type="number" id="Bf" value="3" step="0.25" min="0.1"></div>
+    <div class="sep"></div>
+    <div class="fg"><label>Horizontal distance: wheel CL → footing edge, x <em>[ft]</em></label><input type="number" id="xd" value="4" step="0.25" min="0.1"></div>
+    <span class="ref-tag">Das 8th Ed. — Fig. 6.4, 6.7 variable convention</span>
+  </div>
+
+  <div class="panel">
+    <div class="ph">Loading</div>
+    <div class="fg">
+      <label>Load Model</label>
+      <select id="model">
+        <option value="line" selected>Line Load — rail / axle (Das §6.4, Eq. 6.14)</option>
+        <option value="point">Point Load — single wheel (Das §6.2, Eq. 6.4)</option>
+        <option value="strip">Strip Load — distributed footprint (Das §6.5, Eq. 6.19)</option>
+      </select>
+    </div>
+    <div class="fg"><label id="Qlbl">Cart / rail load, q <em>[kips/ft]</em></label><input type="number" id="Q" value="10" step="0.5" min="0.01"></div>
+    <div class="fg" id="strip_b_field" style="display:none"><label>Strip width, 2B_s <em>[ft]</em></label><input type="number" id="Bs" value="1.5" step="0.25" min="0.1"></div>
+    <span class="ref-tag">Line load: Das Eq. 6.14 | Point: Das Eq. 6.4 | Strip: Das Eq. 6.19</span>
+  </div>
+
+  <div class="panel">
+    <div class="ph">Wall / Foundation Condition</div>
+    <div class="fg">
+      <label>Foundation type (NAVFAC DM-7.2 Fig. 3 multiplier)</label>
+      <select id="rfac">
+        <option value="2" selected>Rigid / unyielding (×2 — Das §12.9 note)</option>
+        <option value="1">Flexible / semi-infinite mass (×1)</option>
+      </select>
+    </div>
+    <span class="ref-tag">Das 8th Ed. §12.9, §12.10 — rigid wall correction ×2</span>
+  </div>
+
+  <div class="panel">
+    <div class="ph">Allowable Limits</div>
+    <div class="row2">
+      <div class="fg"><label>q_allow <em>[ksf]</em></label><input type="number" id="qa" value="2.0" step="0.25" min="0.1"></div>
+      <div class="fg"><label>σ_h,allow <em>[ksf]</em></label><input type="number" id="sha" value="0.5" step="0.05" min="0.05"></div>
+    </div>
+  </div>
+
+  <button class="btn" onclick="run()">▶ Calculate Stresses &amp; Forces</button>
+</div>
+
+<!-- ===== RIGHT OUTPUT ===== -->
+<div class="col-right">
+  <div class="panel">
+    <div class="ph">Cross-Section Diagram</div>
+    <canvas id="cvDiag" height="240"></canvas>
+  </div>
+
+  <div class="panel" id="out" style="display:none">
+    <div class="ph">Results Summary</div>
+    <div id="verdict" class="verdict"></div>
+
+    <div class="kpi-grid" id="kpis"></div>
+
+    <div class="ph" style="margin-top:4px">Force Resultants on Footing Face</div>
+    <table class="ftbl" id="ftbl"></table>
+
+    <div class="ph" style="margin-top:4px">Step-by-Step Calculations (Das 8th Ed.)</div>
+    <div class="steps-box" id="steps"></div>
+  </div>
+
+  <div class="panel" id="chartpanel" style="display:none">
+    <div class="ph">Stress vs. Distance — Sensitivity Sweep</div>
+    <canvas id="sweep" height="200"></canvas>
+  </div>
+</div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// EVENT: model change → update labels
+// ─────────────────────────────────────────────
+document.getElementById('model').addEventListener('change', function(){
+  const m = this.value;
+  document.getElementById('Qlbl').innerHTML =
+    m==='point' ? 'Concentrated load, Q <em>[kips]</em>' :
+    m==='line'  ? 'Line load, q\' <em>[kips/ft]</em>' :
+                  'Strip load, q <em>[ksf]</em>';
+  document.getElementById('strip_b_field').style.display = m==='strip' ? '' : 'none';
+});
+
+// ─────────────────────────────────────────────
+// BOUSSINESQ VERTICAL STRESS  (Das Ch.6)
+// ─────────────────────────────────────────────
+function sigma_v(model, Q, Bs, r, z){
+  if(model==='point'){
+    // Das 8th Ed. Eq.6.4 :  Δσ = (3Q/2π) · z³/R⁵   R=√(r²+z²)
+    const R = Math.sqrt(r*r + z*z);
+    return (3*Q/(2*Math.PI)) * Math.pow(z,3) / Math.pow(R,5);
+  } else if(model==='line'){
+    // Das 8th Ed. Eq.6.14:  Δσ = (2q'/π) · z³/(r²+z²)²
+    return (2*Q/Math.PI) * Math.pow(z,3) / Math.pow(r*r + z*z, 2);
+  } else {
+    // Das 8th Ed. Eq.6.19 strip:  Δσ = (q/π)[α + sinα·cos(α+2δ)]
+    // α = angle subtended by strip, δ = angle to near edge
+    const B = Bs;           // half-width of strip
+    const r1 = Math.abs(r - B); const r2 = Math.abs(r + B);
+    const a1 = Math.atan(r2/z); const a2 = Math.atan(r1/z);
+    const alpha = a1 - a2;
+    const delta = Math.atan(r/z) - a2;
+    return (Q/Math.PI)*(alpha + Math.sin(alpha)*Math.cos(alpha + 2*delta));
+  }
+}
+
+// ─────────────────────────────────────────────
+// BOUSSINESQ LATERAL STRESS  (Das Ch.12)
+// ─────────────────────────────────────────────
+function sigma_h(model, Q, Bs, r, z, rfac){
+  if(model==='point'){
+    // Das 8th Ed. §12.9 Eq.12.67:
+    // σh = (rfac) · (3Q/2π) · (r²·z/R⁵)
+    const R = Math.sqrt(r*r + z*z);
+    return rfac * (3*Q/(2*Math.PI)) * (r*r*z) / Math.pow(R,5);
+  } else if(model==='line'){
+    // Das 8th Ed. §12.10 Eq.12.70:
+    // σh = (rfac) · (2q'/π) · (r²·z/(r²+z²)²)
+    return rfac * (2*Q/Math.PI) * r*r*z / Math.pow(r*r+z*z, 2);
+  } else {
+    // Das §12.11 strip load lateral (Eq.12.72):
+    // σh = (rfac)·(q/π)[α - sinα·cos(α+2δ)]
+    const B = Bs;
+    const r1 = Math.abs(r-B); const r2 = Math.abs(r+B);
+    const a1 = Math.atan(r2/z); const a2 = Math.atan(r1/z);
+    const alpha = a1 - a2;
+    const delta = Math.atan(r/z) - a2;
+    return rfac * (Q/Math.PI) * (alpha - Math.sin(alpha)*Math.cos(alpha+2*delta));
+  }
+}
+
+// ─────────────────────────────────────────────
+// STRESS INTEGRATION over footing face
+// For vertical: integrate Δσv over B×L area at depth z1
+// For lateral:  integrate σh over L×Df face (z from z1 to z1+Df)
+// ─────────────────────────────────────────────
+function integrateVertical(model,Q,Bs,r,z,Bf,Lf){
+  // Numerical integration: NxM grid over footing plan area
+  // r is dist from load to NEAR edge of footing; integrate from r to r+Bf
+  const N=30, M=30;
+  let sum=0;
+  for(let i=0;i<N;i++) for(let j=0;j<M;j++){
+    const ri = r + Bf*(i+.5)/N;
+    const lj = -Lf/2 + Lf*(j+.5)/M;  // along footing length, centered
+    const rr = Math.sqrt(ri*ri + lj*lj);
+    sum += sigma_v(model,Q,Bs,rr,z);
+  }
+  const avg = sum/(N*M);
+  return { avg, force: avg * Bf * Lf };
+}
+
+function integrateLateral(model,Q,Bs,r,z1,Df,Lf,rfac){
+  // Integrate σh over footing side face: height Df, width Lf
+  const N=40, M=30;
+  let sum=0;
+  for(let i=0;i<N;i++) for(let j=0;j<M;j++){
+    const zi = z1 + Df*(i+.5)/N;
+    const lj = -Lf/2 + Lf*(j+.5)/M;
+    const rr = Math.sqrt(r*r + lj*lj);
+    sum += sigma_h(model,Q,Bs,rr,zi,rfac);
+  }
+  const avg = sum/(N*M);
+  return { avg, force: avg * Df * Lf };
+}
+
+// ─────────────────────────────────────────────
+// MIN DISTANCE search
+// ─────────────────────────────────────────────
+function findXmin(model,Q,Bs,z1,zmid,rfac,type,lim){
+  let lo=.01,hi=200;
+  for(let i=0;i<80;i++){
+    const m=(lo+hi)/2;
+    const v = type==='v' ? sigma_v(model,Q,Bs,m,z1) : sigma_h(model,Q,Bs,m,zmid,rfac);
+    v>lim ? lo=m : hi=m;
+  }
+  return hi;
+}
+
+// ─────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────
+function run(){
+  const z1   = +document.getElementById('z1').value;
+  const Df   = +document.getElementById('Df').value;
+  const Lf   = +document.getElementById('Lf').value;
+  const Bf   = +document.getElementById('Bf').value;
+  const xd   = +document.getElementById('xd').value;
+  const Q    = +document.getElementById('Q').value;
+  const Bs   = +document.getElementById('Bs').value;
+  const model= document.getElementById('model').value;
+  const rfac = +document.getElementById('rfac').value;
+  const qa   = +document.getElementById('qa').value;
+  const sha  = +document.getElementById('sha').value;
+
+  const zmid = z1 + Df/2;
+  const zbot = z1 + Df;
+  const r    = xd;  // horiz distance from load to footing NEAR edge
+
+  drawDiagram({z1,Df,Lf,Bf,x:xd,model});
+
+  // ── Point stresses (Das equations directly) ──
+  const sv_top = sigma_v(model, Q, Bs, r, z1);
+  const sv_mid = sigma_v(model, Q, Bs, r, zmid);
+  const sv_bot = sigma_v(model, Q, Bs, r, zbot);
+
+  const sh_top = sigma_h(model, Q, Bs, r, z1,   rfac);
+  const sh_mid = sigma_h(model, Q, Bs, r, zmid,  rfac);
+  const sh_bot = sigma_h(model, Q, Bs, r, zbot,  rfac);
+
+  // ── Integrated forces ──
+  const Iv = integrateVertical(model, Q, Bs, r, z1, Bf, Lf);
+  const Ih = integrateLateral(model, Q, Bs, r, z1, Df, Lf, rfac);
+
+  // ── Minimum distances ──
+  const xmv = findXmin(model,Q,Bs,z1,zmid,rfac,'v',qa);
+  const xmh = findXmin(model,Q,Bs,z1,zmid,rfac,'h',sha);
+  const xm  = Math.max(xmv, xmh, zbot);
+
+  // ── Verdict ──
+  const ok_v = sv_top <= qa;
+  const ok_h = sh_mid <= sha;
+  const ok_rt= xd >= zbot;
+  const vEl  = document.getElementById('verdict');
+  if(ok_v && ok_h && ok_rt){
+    vEl.className='verdict v-ok';
+    vEl.innerHTML='✔  PASS — All stress and 1:1 rule checks satisfied at x = '+xd+' ft';
+  } else if(ok_v && ok_h && !ok_rt){
+    vEl.className='verdict v-warn';
+    vEl.innerHTML='⚠  MARGINAL — Stress checks pass but x &lt; 1:1 zone boundary ('+zbot.toFixed(1)+' ft)';
+  } else {
+    const f=[];
+    if(!ok_v) f.push('Δσv = '+sv_top.toFixed(4)+' ksf > q_allow');
+    if(!ok_h) f.push('σh = '+sh_mid.toFixed(4)+' ksf > σh,allow');
+    vEl.className='verdict v-fail';
+    vEl.innerHTML='✖  FAIL — '+f.join(' | ')+' → Required x ≥ '+xm.toFixed(2)+' ft';
+  }
+
+  // ── KPIs ──
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi"><div class="v" style="color:var(--accent)">${sv_top.toFixed(4)}</div><div class="u">ksf</div><div class="l">Δσv @ footing top</div></div>
+    <div class="kpi"><div class="v" style="color:var(--accent2)">${sh_mid.toFixed(4)}</div><div class="u">ksf</div><div class="l">σh @ footing mid</div></div>
+    <div class="kpi"><div class="v" style="color:var(--green)">${Iv.force.toFixed(3)}</div><div class="u">kips</div><div class="l">Fv on footing plan</div></div>
+    <div class="kpi"><div class="v" style="color:var(--yellow)">${Ih.force.toFixed(3)}</div><div class="u">kips</div><div class="l">Fh on footing face</div></div>`;
+
+  // ── Force Table ──
+  document.getElementById('ftbl').innerHTML = `
+    <thead><tr>
+      <th>Check</th><th>Location</th><th>Stress (ksf)</th><th>Force (kips)</th><th>Limit (ksf)</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>Vertical Δσv</td><td>z₁ = ${z1} ft (top)</td><td class="hi">${sv_top.toFixed(5)}</td><td>${Iv.force.toFixed(3)} <span style="color:var(--muted);font-size:.65rem">on ${Bf}×${Lf} ft²</span></td><td>${qa}</td><td class="${sv_top<=qa?'ok':'ng'}">${sv_top<=qa?'✔ OK':'✖ FAIL'}</td></tr>
+      <tr><td>Vertical Δσv</td><td>z_mid = ${zmid} ft</td><td>${sv_mid.toFixed(5)}</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><td>Vertical Δσv</td><td>z_bot = ${zbot} ft</td><td>${sv_bot.toFixed(5)}</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><td>Lateral σh</td><td>z₁ = ${z1} ft (top)</td><td>${sh_top.toFixed(5)}</td><td rowspan="3">${Ih.force.toFixed(3)} <span style="color:var(--muted);font-size:.65rem">on ${Df}×${Lf} ft²</span></td><td>—</td><td>—</td></tr>
+      <tr><td>Lateral σh</td><td>z_mid = ${zmid} ft</td><td class="hi">${sh_mid.toFixed(5)}</td><td>${sha}</td><td class="${sh_mid<=sha?'ok':'ng'}">${sh_mid<=sha?'✔ OK':'✖ FAIL'}</td></tr>
+      <tr><td>Lateral σh</td><td>z_bot = ${zbot} ft</td><td>${sh_bot.toFixed(5)}</td><td>—</td><td>—</td></tr>
+      <tr><td>1:1 Rule-of-Thumb</td><td>x_req = z_bot = ${zbot} ft</td><td>—</td><td>—</td><td>x ≥ ${zbot} ft</td><td class="${xd>=zbot?'ok':'ng'}">${xd>=zbot?'✔ OK':'✖ x too small'}</td></tr>
+      <tr style="background:rgba(0,180,216,.05)"><td colspan="2"><strong>Min. safe distance x_min (governs)</strong></td><td>—</td><td>—</td><td colspan="2" class="hi">x ≥ <strong>${xm.toFixed(2)} ft</strong></td></tr>
+    </tbody>`;
+
+  // ── Steps ──
+  document.getElementById('steps').innerHTML = buildSteps({model,Q,Bs,r,z1,zmid,zbot,Df,Bf,Lf,rfac,
+    sv_top,sv_mid,sv_bot,sh_top,sh_mid,sh_bot,Iv,Ih,xmv,xmh,xm,qa,sha});
+
+  document.getElementById('out').style.display='';
+  drawSweep(model,Q,Bs,z1,zmid,rfac,qa,sha,xd);
+  document.getElementById('chartpanel').style.display='';
+}
+
+// ─────────────────────────────────────────────
+// STEP HTML
+// ─────────────────────────────────────────────
+function buildSteps(p){
+  const {model,Q,Bs,r,z1,zmid,zbot,Df,Bf,Lf,rfac,sv_top,sv_mid,sv_bot,sh_top,sh_mid,sh_bot,Iv,Ih,xmv,xmh,xm,qa,sha} = p;
+  const mname = model==='point'?'Point Load (3D)':model==='line'?'Line Load (2D)':'Strip Load (2D)';
+  let s='';
+
+  s+=`<span class="sec">══ GIVEN ══════════════════════════════════</span>\n`;
+  s+=`  Footing top depth   z₁    = <span class="vv">${z1} ft</span>\n`;
+  s+=`  Footing thickness   D_f   = <span class="vv">${Df} ft</span>\n`;
+  s+=`  Footing mid depth   z_mid = <span class="vv">${zmid} ft</span>\n`;
+  s+=`  Footing bot depth   z_bot = <span class="vv">${zbot} ft</span>\n`;
+  s+=`  Footing plan dims   B × L = <span class="vv">${Bf} × ${Lf} ft</span>  (${(Bf*Lf).toFixed(2)} ft²)\n`;
+  s+=`  Footing side face   D × L = <span class="vv">${Df} × ${Lf} ft</span>  (${(Df*Lf).toFixed(2)} ft²)\n`;
+  s+=`  Horiz. distance     r (x) = <span class="vv">${r} ft</span>  (wheel CL to footing near edge)\n`;
+  s+=`  Load value          Q     = <span class="vv">${Q} ${model==='point'?'kips':'kips/ft'}</span>\n`;
+  s+=`  Load model                = <span class="vv">${mname}</span>\n`;
+  s+=`  Rigidity factor     k     = <span class="vv">×${rfac}</span>\n\n`;
+
+  // ── STEP 1: 1:1 Rule ──
+  s+=`<span class="sec">══ STEP 1 : 1:1 RULE-OF-THUMB CHECK ══════</span>\n`;
+  s+=`  Ref: NAVFAC DM-7.2, p.7.2-60 & Das §12.9 commentary\n`;
+  s+=`  Influence zone boundary = z_bot = z₁ + D_f\n`;
+  s+=`  <span class="eq">x_min(1:1) = ${z1} + ${Df} = <span class="vv">${zbot.toFixed(2)} ft</span></span>\n`;
+  s+=`  Your x = ${r} ft  ${r>=zbot?'<span class="vv">≥ limit ✔</span>':'<span class="rr">< limit — cart in influence zone ✖</span>'}\n\n`;
+
+  if(model==='point'){
+    const R1=Math.sqrt(r*r+z1*z1), Rm=Math.sqrt(r*r+zmid*zmid), Rb=Math.sqrt(r*r+zbot*zbot);
+    s+=`<span class="sec">══ STEP 2A : VERTICAL STRESS — Point Load ═</span>\n`;
+    s+=`  Ref: Das 8th Ed. §6.2, Equation 6.4\n`;
+    s+=`  Formula:  <span class="eq">Δσv = (3Q / 2π) × z³ / R⁵   where R = √(r²+z²)</span>\n\n`;
+    s+=`  At z₁ = ${z1} ft:\n`;
+    s+=`    R₁ = √(${r}² + ${z1}²) = <span class="vv">${R1.toFixed(4)} ft</span>\n`;
+    s+=`    <span class="eq">Δσv = (3×${Q})/(2π) × ${z1}³ / ${R1.toFixed(4)}⁵</span>\n`;
+    s+=`    <span class="eq">    = ${(3*Q/(2*Math.PI)).toFixed(4)} × ${Math.pow(z1,3).toFixed(3)} / ${Math.pow(R1,5).toFixed(4)}\n`;
+    s+=`    Δσv(top) = <span class="vv">${sv_top.toFixed(5)} ksf</span></span>   limit: ${qa} ksf  ${sv_top<=qa?'<span class="vv">✔</span>':'<span class="rr">✖</span>'}\n\n`;
+    s+=`  At z_mid = ${zmid} ft:\n    Δσv(mid) = <span class="vv">${sv_mid.toFixed(5)} ksf</span>\n`;
+    s+=`  At z_bot = ${zbot} ft:\n    Δσv(bot) = <span class="vv">${sv_bot.toFixed(5)} ksf</span>\n\n`;
+
+    s+=`<span class="sec">══ STEP 2B : LATERAL STRESS — Point Load ══</span>\n`;
+    s+=`  Ref: Das 8th Ed. §12.9, Equation 12.67 (Boussinesq modified for rigid wall)\n`;
+    s+=`  Formula: <span class="eq">σh = k × (3Q/2π) × (r²·z / R⁵)   k=×${rfac} (rigid)</span>\n\n`;
+    s+=`  At z_mid = ${zmid} ft:\n`;
+    s+=`    R_m = √(${r}²+${zmid}²) = <span class="vv">${Rm.toFixed(4)} ft</span>\n`;
+    s+=`    <span class="eq">σh = ${rfac}×(3×${Q}/2π)×(${r}²×${zmid})/${Rm.toFixed(4)}⁵</span>\n`;
+    s+=`    σh(mid) = <span class="vv">${sh_mid.toFixed(5)} ksf</span>   limit: ${sha} ksf  ${sh_mid<=sha?'<span class="vv">✔</span>':'<span class="rr">✖</span>'}\n\n`;
+    s+=`  At z₁:   σh(top) = <span class="vv">${sh_top.toFixed(5)} ksf</span>\n`;
+    s+=`  At z_bot: σh(bot) = <span class="vv">${sh_bot.toFixed(5)} ksf</span>\n\n`;
+
+  } else if(model==='line'){
+    s+=`<span class="sec">══ STEP 2A : VERTICAL STRESS — Line Load ══</span>\n`;
+    s+=`  Ref: Das 8th Ed. §6.4, Equation 6.14\n`;
+    s+=`  Formula:  <span class="eq">Δσv = (2q'/π) × z³ / (r²+z²)²</span>\n\n`;
+    const d1=Math.pow(r*r+z1*z1,2), dm=Math.pow(r*r+zmid*zmid,2);
+    s+=`  At z₁ = ${z1} ft:\n`;
+    s+=`    (r²+z₁²)² = (${r}²+${z1}²)² = ${d1.toFixed(4)} ft⁴\n`;
+    s+=`    <span class="eq">Δσv = (2×${Q}/π) × ${z1}³ / ${d1.toFixed(4)}</span>\n`;
+    s+=`    Δσv(top) = <span class="vv">${sv_top.toFixed(5)} ksf</span>   limit: ${qa} ksf  ${sv_top<=qa?'<span class="vv">✔</span>':'<span class="rr">✖</span>'}\n`;
+    s+=`    Δσv(mid) = <span class="vv">${sv_mid.toFixed(5)} ksf</span>\n`;
+    s+=`    Δσv(bot) = <span class="vv">${sv_bot.toFixed(5)} ksf</span>\n\n`;
+
+    s+=`<span class="sec">══ STEP 2B : LATERAL STRESS — Line Load ═══</span>\n`;
+    s+=`  Ref: Das 8th Ed. §12.10, Equation 12.70\n`;
+    s+=`  Formula: <span class="eq">σh = k × (2q'/π) × r²·z / (r²+z²)²   k=×${rfac}</span>\n\n`;
+    s+=`  At z_mid = ${zmid} ft:\n`;
+    s+=`    (r²+z_mid²)² = (${r}²+${zmid}²)² = ${dm.toFixed(4)} ft⁴\n`;
+    s+=`    <span class="eq">σh = ${rfac}×(2×${Q}/π)×${r}²×${zmid}/${dm.toFixed(4)}</span>\n`;
+    s+=`    σh(mid) = <span class="vv">${sh_mid.toFixed(5)} ksf</span>   limit: ${sha} ksf  ${sh_mid<=sha?'<span class="vv">✔</span>':'<span class="rr">✖</span>'}\n`;
+    s+=`    σh(top) = <span class="vv">${sh_top.toFixed(5)} ksf</span>\n`;
+    s+=`    σh(bot) = <span class="vv">${sh_bot.toFixed(5)} ksf</span>\n\n`;
+
+  } else {
+    s+=`<span class="sec">══ STEP 2A : VERTICAL STRESS — Strip Load ═</span>\n`;
+    s+=`  Ref: Das 8th Ed. §6.5, Equation 6.19\n`;
+    s+=`  Formula: <span class="eq">Δσv = (q/π)[α + sinα·cos(α+2δ)]</span>\n`;
+    s+=`    α = angle subtended by strip width at point\n`;
+    s+=`    δ = angle from vertical to near edge of strip\n\n`;
+    s+=`    Δσv(top) = <span class="vv">${sv_top.toFixed(5)} ksf</span>   limit: ${qa} ksf  ${sv_top<=qa?'<span class="vv">✔</span>':'<span class="rr">✖</span>'}\n`;
+    s+=`    Δσv(mid) = <span class="vv">${sv_mid.toFixed(5)} ksf</span>\n\n`;
+    s+=`<span class="sec">══ STEP 2B : LATERAL STRESS — Strip Load ══</span>\n`;
+    s+=`  Ref: Das 8th Ed. §12.11, Equation 12.72\n`;
+    s+=`  Formula: <span class="eq">σh = k×(q/π)[α - sinα·cos(α+2δ)]</span>\n\n`;
+    s+=`    σh(mid) = <span class="vv">${sh_mid.toFixed(5)} ksf</span>   limit: ${sha} ksf  ${sh_mid<=sha?'<span class="vv">✔</span>':'<span class="rr">✖</span>'}\n\n`;
+  }
+
+  s+=`<span class="sec">══ STEP 3 : FORCE RESULTANTS ══════════════</span>\n`;
+  s+=`  Method: Numerical integration (30×30 quadrature) over footing face areas\n\n`;
+  s+=`  ▸ VERTICAL FORCE on footing plan (B×L = ${Bf}×${Lf} = ${(Bf*Lf).toFixed(2)} ft²)\n`;
+  s+=`    Average Δσv over area = <span class="vv">${Iv.avg.toFixed(5)} ksf</span>\n`;
+  s+=`    <span class="eq">Fv = σv,avg × B × L = ${Iv.avg.toFixed(5)} × ${(Bf*Lf).toFixed(2)}\n`;
+  s+=`    Fv = <span class="vv">${Iv.force.toFixed(4)} kips</span></span>\n\n`;
+  s+=`  ▸ LATERAL FORCE on footing side face (D×L = ${Df}×${Lf} = ${(Df*Lf).toFixed(2)} ft²)\n`;
+  s+=`    Average σh over face  = <span class="vv">${Ih.avg.toFixed(5)} ksf</span>\n`;
+  s+=`    <span class="eq">Fh = σh,avg × Df × L = ${Ih.avg.toFixed(5)} × ${(Df*Lf).toFixed(2)}\n`;
+  s+=`    Fh = <span class="vv">${Ih.force.toFixed(4)} kips</span></span>\n\n`;
+
+  s+=`<span class="sec">══ STEP 4 : MINIMUM SAFE DISTANCE ════════</span>\n`;
+  s+=`  Solve: Δσv(x) = q_allow  →  x_min,v = <span class="vv">${xmv.toFixed(3)} ft</span>\n`;
+  s+=`  Solve: σh(x)  = sha,allow →  x_min,h = <span class="vv">${xmh.toFixed(3)} ft</span>\n`;
+  s+=`  1:1 rule-of-thumb        →  x_min,rt = <span class="vv">${zbot.toFixed(3)} ft</span>\n`;
+  s+=`  <span class="eq">x_min = MAX(${xmv.toFixed(2)}, ${xmh.toFixed(2)}, ${zbot.toFixed(2)}) = <span class="vv">${xm.toFixed(3)} ft</span></span>  ← GOVERNS\n\n`;
+
+  s+=`<span class="sec">══ REFERENCES ═════════════════════════════</span>\n`;
+  s+=`<span class="nn">  Vertical stress:\n`;
+  s+=`    · Das 8th Ed. §6.2 Eq.6.4   — Point load (3D Boussinesq)\n`;
+  s+=`    · Das 8th Ed. §6.4 Eq.6.14  — Line load\n`;
+  s+=`    · Das 8th Ed. §6.5 Eq.6.19  — Strip load\n`;
+  s+=`  Lateral stress:\n`;
+  s+=`    · Das 8th Ed. §12.9 Eq.12.67 — Point load on rigid wall\n`;
+  s+=`    · Das 8th Ed. §12.10 Eq.12.70 — Line load on rigid wall\n`;
+  s+=`    · Das 8th Ed. §12.11 Eq.12.72 — Strip load on rigid wall\n`;
+  s+=`    · ×2 rigidity factor: NAVFAC DM-7.2 Fig.3, p.7.2-61\n`;
+  s+=`  Rule-of-thumb:\n`;
+  s+=`    · NAVFAC DM-7.2 p.7.2-60 — 1:1 slope influence zone</span>`;
+  return s;
+}
+
+// ─────────────────────────────────────────────
+// DIAGRAM
+// ─────────────────────────────────────────────
+function drawDiagram(p){
+  const cv=document.getElementById('cvDiag');
+  const W=cv.offsetWidth||600; cv.width=W; cv.height=240;
+  const ctx=cv.getContext('2d');
+  const {z1,Df,x} = p;
+  const zbot=z1+Df;
+  const sc=Math.min(30, W/(x+7));
+  const gY=52;
+  const px=v=>52+v*sc, py=v=>gY+v*sc;
+
+  ctx.fillStyle='#0a0c10'; ctx.fillRect(0,0,W,240);
+  ctx.fillStyle='#12192a'; ctx.fillRect(0,gY,W,240-gY);
+  ctx.strokeStyle='#1e2a38'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,gY); ctx.lineTo(W,gY); ctx.stroke();
+
+  // ground hatch
+  for(let i=0;i<W;i+=14){
+    ctx.strokeStyle='rgba(30,42,56,0.6)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(i,gY); ctx.lineTo(i-10,gY+10); ctx.stroke();
+  }
+
+  // Boussinesq fan
+  for(let a=-55;a<=55;a+=15){
+    const rad=a*Math.PI/180, len=180;
+    ctx.strokeStyle='rgba(239,35,60,0.12)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(px(0),gY); ctx.lineTo(px(0)+Math.sin(rad)*len, gY+Math.cos(rad)*len); ctx.stroke();
+  }
+
+  // 1:1 line
+  ctx.strokeStyle='rgba(6,214,160,0.5)'; ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
+  ctx.beginPath(); ctx.moveTo(px(0),gY); ctx.lineTo(px(zbot),py(zbot)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#06d6a0'; ctx.font='bold 9px JetBrains Mono';
+  ctx.fillText('1:1',px(zbot/2)+4,py(zbot/2)-4);
+
+  // cart
+  ctx.fillStyle='#1a3a2a'; ctx.strokeStyle='#06d6a0'; ctx.lineWidth=1.5;
+  ctx.fillRect(px(0)-24,gY-52,48,42); ctx.strokeRect(px(0)-24,gY-52,48,42);
+  ctx.fillStyle='#7fdfb0'; ctx.font='bold 10px Syne'; ctx.textAlign='center';
+  ctx.fillText('CART',px(0),gY-28);
+  // wheels
+  [-14,14].forEach(wx=>{
+    ctx.fillStyle='#0a0c10'; ctx.strokeStyle='#4a6580'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(px(0)+wx,gY,6,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  });
+  // load arrow
+  ctx.strokeStyle='#ef233c'; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(px(0),gY-10); ctx.lineTo(px(0),gY+16); ctx.stroke();
+  ctx.fillStyle='#ef233c';
+  ctx.beginPath(); ctx.moveTo(px(0),gY+16); ctx.lineTo(px(0)-5,gY+8); ctx.lineTo(px(0)+5,gY+8); ctx.closePath(); ctx.fill();
+
+  // footing
+  const ftop=py(z1), fbot=py(zbot), fcx=px(x), fw=Math.min(p.Bf||3,3)*sc;
+  ctx.fillStyle='#1a2535'; ctx.strokeStyle='#00b4d8'; ctx.lineWidth=1.5;
+  ctx.fillRect(fcx-fw/2,ftop,fw,Df*sc);
+  ctx.strokeRect(fcx-fw/2,ftop,fw,Df*sc);
+  ctx.fillStyle='#90e0ef'; ctx.font='bold 9px JetBrains Mono'; ctx.textAlign='center';
+  ctx.fillText('FTNG',fcx,(ftop+fbot)/2+3);
+
+  // depth dim lines
+  ctx.strokeStyle='rgba(0,180,216,0.4)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(px(-1.5),gY); ctx.lineTo(px(-1.5),ftop); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px(-1.5),ftop); ctx.lineTo(px(-1.5),fbot); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#4a9db5'; ctx.font='9px JetBrains Mono'; ctx.textAlign='right';
+  ctx.fillText('z₁='+z1,px(-1.5)-3,(gY+ftop)/2+3);
+  ctx.fillText('Df='+Df,px(-1.5)-3,(ftop+fbot)/2+3);
+
+  // horiz dim
+  ctx.strokeStyle='rgba(247,127,0,0.5)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(px(0),gY-18); ctx.lineTo(px(x),gY-18); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#f77f00'; ctx.font='9px JetBrains Mono'; ctx.textAlign='center';
+  ctx.fillText('x = '+x+' ft',px(x/2),gY-22);
+
+  // GL label
+  ctx.fillStyle='#4a6580'; ctx.font='9px JetBrains Mono'; ctx.textAlign='left';
+  ctx.fillText('GL',4,gY-5);
+}
+
+// ─────────────────────────────────────────────
+// SWEEP CHART
+// ─────────────────────────────────────────────
+function drawSweep(model,Q,Bs,z1,zmid,rfac,qa,sha,xCur){
+  const cv=document.getElementById('sweep');
+  const W=cv.offsetWidth||600; cv.width=W; cv.height=200;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle='#0a0c10'; ctx.fillRect(0,0,W,200);
+
+  const N=200, xMax=20;
+  const svA=[], shA=[];
+  for(let i=0;i<N;i++){
+    const xv=.05+(xMax-.05)*i/(N-1);
+    svA.push(sigma_v(model,Q,Bs,xv,z1));
+    shA.push(sigma_h(model,Q,Bs,xv,zmid,rfac));
+  }
+  const mxV=Math.max(...svA,...shA,qa,sha)*1.15;
+  const mx=52,my=12,mxr=16,myb=28;
+  const pw=W-mx-mxr, ph=200-my-myb;
+
+  // grid
+  for(let g=0;g<=4;g++){
+    const gy=my+ph-ph*g/4;
+    ctx.strokeStyle='#1e2a38'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(mx,gy); ctx.lineTo(mx+pw,gy); ctx.stroke();
+    ctx.fillStyle='#4a6580'; ctx.font='9px JetBrains Mono'; ctx.textAlign='right';
+    ctx.fillText((mxV*g/4).toFixed(3),mx-4,gy+3);
+  }
+  for(let g=0;g<=5;g++){
+    const gx=mx+pw*g/5;
+    ctx.strokeStyle='#1e2a38'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(gx,my); ctx.lineTo(gx,my+ph); ctx.stroke();
+    ctx.fillStyle='#4a6580'; ctx.font='9px JetBrains Mono'; ctx.textAlign='center';
+    ctx.fillText((xMax*g/5).toFixed(0),gx,my+ph+14);
+  }
+  ctx.fillStyle='#4a6580'; ctx.font='9px JetBrains Mono';
+  ctx.textAlign='center'; ctx.fillText('Distance x (ft)',mx+pw/2,196);
+  ctx.save(); ctx.translate(12,my+ph/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign='center'; ctx.fillText('Stress (ksf)',0,0); ctx.restore();
+
+  const gx=xv=>mx+pw*xv/xMax, gy=v=>my+ph-ph*v/mxV;
+
+  // allow lines
+  ctx.setLineDash([5,4]);
+  ctx.strokeStyle='rgba(0,180,216,.5)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(mx,gy(qa)); ctx.lineTo(mx+pw,gy(qa)); ctx.stroke();
+  ctx.strokeStyle='rgba(247,127,0,.5)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(mx,gy(sha)); ctx.lineTo(mx+pw,gy(sha)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // curves
+  ctx.lineWidth=2; ctx.strokeStyle='#00b4d8';
+  ctx.beginPath();
+  svA.forEach((v,i)=>{ const xi=.05+(xMax-.05)*i/(N-1); i?ctx.lineTo(gx(xi),gy(v)):ctx.moveTo(gx(xi),gy(v)); });
+  ctx.stroke();
+  ctx.strokeStyle='#f77f00';
+  ctx.beginPath();
+  shA.forEach((v,i)=>{ const xi=.05+(xMax-.05)*i/(N-1); i?ctx.lineTo(gx(xi),gy(v)):ctx.moveTo(gx(xi),gy(v)); });
+  ctx.stroke();
+
+  // current x
+  ctx.strokeStyle='#ffd166'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(gx(xCur),my); ctx.lineTo(gx(xCur),my+ph); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#ffd166'; ctx.font='9px JetBrains Mono'; ctx.textAlign='center';
+  ctx.fillText('x='+xCur,gx(xCur),my+ph+14);
+
+  // legend
+  const lx=mx+pw-150;
+  [['#00b4d8','Δσv (vertical, Das Eq.6.x)'],['#f77f00','σh (lateral, Das Eq.12.x)'],['#ffd166','Your x']].forEach(([c,l],i)=>{
+    ctx.strokeStyle=c; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(lx,my+10+i*16); ctx.lineTo(lx+16,my+10+i*16); ctx.stroke();
+    ctx.fillStyle='#cdd6e8'; ctx.font='8px JetBrains Mono'; ctx.textAlign='left';
+    ctx.fillText(l,lx+20,my+13+i*16);
+  });
+}
+
+// init
+window.addEventListener('load',()=>{
+  drawDiagram({z1:3,Df:1,Lf:4,Bf:3,x:4});
+  run();
+});
+window.addEventListener('resize',()=>{
+  drawDiagram({
+    z1:+document.getElementById('z1').value,
+    Df:+document.getElementById('Df').value,
+    Lf:+document.getElementById('Lf').value,
+    Bf:+document.getElementById('Bf').value,
+    x:+document.getElementById('xd').value
+  });
+});
+</script>
+</body>
+</html>
