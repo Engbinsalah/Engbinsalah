@@ -1,0 +1,60 @@
+<section class="hero" style="background-image: linear-gradient(120deg, rgba(13,42,63,0.1), rgba(14,167,172,0.1));">
+  <div class="hero-content">
+    <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+    <h1>{{ section.settings.heading }}</h1>
+    <p class="lede">{{ section.settings.subheading }}</p>
+    <div class="hero-actions">
+      <a class="button primary" href="{{ section.settings.primary_link }}">{{ section.settings.primary_label }}</a>
+      <a class="button ghost" href="{{ section.settings.secondary_link }}">{{ section.settings.secondary_label }}</a>
+    </div>
+    <div class="hero-tags">
+      {% for tag in section.blocks %}
+        <div class="pill">{{ tag.settings.label }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="hero-media">
+    {% if section.settings.image != blank %}
+      <img src="{{ section.settings.image | image_url: width: 720 }}" alt="{{ section.settings.heading }}" loading="lazy">
+    {% else %}
+      <div class="image-placeholder">Upload a high-quality lifestyle image.</div>
+    {% endif %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Hero banner",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Smart Tools for Your Everyday Home"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "Amrend Pro-Slice Mandoline Slicer"},
+    {"type": "textarea", "id": "subheading", "label": "Subheading", "default": "Prep ingredients in seconds with pro-grade precision, safety-first design, and dishwasher-safe parts."},
+    {"type": "url", "id": "primary_link", "label": "Primary link", "default": "/collections/all"},
+    {"type": "text", "id": "primary_label", "label": "Primary label", "default": "Shop Best Sellers"},
+    {"type": "url", "id": "secondary_link", "label": "Secondary link", "default": "/collections/flash-deals"},
+    {"type": "text", "id": "secondary_label", "label": "Secondary label", "default": "View Flash Deals"},
+    {"type": "image_picker", "id": "image", "label": "Hero image"}
+  ],
+  "blocks": [
+    {
+      "type": "tag",
+      "name": "Tag",
+      "settings": [
+        {"type": "text", "id": "label", "label": "Label", "default": "Mandoline"}
+      ]
+    }
+  ],
+  "max_blocks": 6,
+  "presets": [
+    {
+      "name": "Hero banner",
+      "category": "Hero",
+      "blocks": [
+        {"type": "tag"},
+        {"type": "tag"},
+        {"type": "tag"}
+      ]
+    }
+  ]
+}
+{% endschema %}

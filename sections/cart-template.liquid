@@ -1,0 +1,46 @@
+<section class="section cart">
+  <div class="section-header">
+    <h1>Your cart</h1>
+    <p class="lede">Review items before checkout.</p>
+  </div>
+  {% if cart.item_count == 0 %}
+    <p>Your cart is empty.</p>
+  {% else %}
+    <form action="/cart" method="post" novalidate>
+      <table class="cart-table">
+        <thead>
+          <tr><th>Item</th><th>Price</th><th>Qty</th><th>Total</th></tr>
+        </thead>
+        <tbody>
+          {% for item in cart.items %}
+            <tr>
+              <td class="cart-product">
+                <a href="{{ item.url }}">{{ item.image | image_url: width: 120 | image_tag: item.title }}</a>
+                <div>
+                  <p>{{ item.product.title }}</p>
+                  <p class="pill">{{ item.variant.title }}</p>
+                </div>
+              </td>
+              <td>{{ item.price | money }}</td>
+              <td><input type="number" name="updates[]" value="{{ item.quantity }}" min="0"></td>
+              <td>{{ item.line_price | money }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="cart-summary">
+        <p>Subtotal: {{ cart.total_price | money }}</p>
+        <button type="submit" class="button ghost" name="update">Update cart</button>
+        <button type="submit" class="button primary" name="checkout">Checkout</button>
+      </div>
+    </form>
+  {% endif %}
+</section>
+
+{% schema %}
+{
+  "name": "Cart template",
+  "settings": [],
+  "presets": [{"name": "Cart template", "category": "Cart"}]
+}
+{% endschema %}

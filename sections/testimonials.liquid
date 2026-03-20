@@ -1,0 +1,40 @@
+<section class="section testimonials">
+  <div class="section-header">
+    <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+    <h2>{{ section.settings.heading }}</h2>
+  </div>
+  <div class="testimonial-grid">
+    {% for block in section.blocks %}
+      <article class="testimonial-card">
+        <div class="rating">★★★★★</div>
+        <p class="quote">“{{ block.settings.quote }}”</p>
+        <p class="author">{{ block.settings.author }}</p>
+        <p class="meta">{{ block.settings.meta }}</p>
+      </article>
+    {% else %}
+      <div class="placeholder">Add testimonials to showcase real customer love.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Testimonials",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Loved by customers"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "What people are saying"}
+  ],
+  "blocks": [
+    {
+      "type": "testimonial",
+      "name": "Testimonial",
+      "settings": [
+        {"type": "textarea", "id": "quote", "label": "Quote", "default": "My kitchen prep time is cut in half."},
+        {"type": "text", "id": "author", "label": "Author", "default": "Sophie M."},
+        {"type": "text", "id": "meta", "label": "Meta", "default": "Verified buyer"}
+      ]
+    }
+  ],
+  "presets": [{"name": "Testimonials", "category": "Text"}]
+}
+{% endschema %}

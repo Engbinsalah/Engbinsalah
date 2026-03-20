@@ -1,0 +1,13 @@
+{
+  "sections": {
+    "hero": {"type": "hero-banner"},
+    "featured_categories": {"type": "featured-categories"},
+    "best": {"type": "best-sellers"},
+    "flash": {"type": "flash-deals"},
+    "trending": {"type": "trending-products"},
+    "why": {"type": "why-choose-us"},
+    "testimonials": {"type": "testimonials"},
+    "newsletter": {"type": "newsletter"}
+  },
+  "order": ["hero", "featured_categories", "best", "flash", "trending", "why", "testimonials", "newsletter"]
+}

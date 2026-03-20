@@ -1,0 +1,33 @@
+<section class="section newsletter">
+  <div class="section-header">
+    <p class="eyebrow">{{ section.settings.eyebrow }}</p>
+    <h2>{{ section.settings.heading }}</h2>
+    <p class="lede">{{ section.settings.subheading }}</p>
+  </div>
+  {% form 'customer' %}
+    <input type="hidden" name="contact[tags]" value="newsletter">
+    <div class="newsletter-form">
+      <input type="email" name="contact[email]" placeholder="Enter your email" aria-label="Email" required>
+      <button type="submit" class="button primary">{{ section.settings.button_label }}</button>
+    </div>
+    {% if form.posted_successfully? %}
+      <p class="success">Thanks for subscribing!</p>
+    {% endif %}
+    {% if form.errors %}
+      <p class="error">{{ form.errors | default_errors }}</p>
+    {% endif %}
+  {% endform %}
+</section>
+
+{% schema %}
+{
+  "name": "Newsletter",
+  "settings": [
+    {"type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Stay updated"},
+    {"type": "text", "id": "heading", "label": "Heading", "default": "Save 10% on your first order"},
+    {"type": "textarea", "id": "subheading", "label": "Subheading", "default": "Exclusive drops, flash sales, and kitchen inspo."},
+    {"type": "text", "id": "button_label", "label": "Button label", "default": "Subscribe"}
+  ],
+  "presets": [{"name": "Newsletter", "category": "Form"}]
+}
+{% endschema %}

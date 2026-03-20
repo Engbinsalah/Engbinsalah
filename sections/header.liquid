@@ -1,0 +1,23 @@
+<div class="header-bar">
+  <div class="header-left">
+    <button class="icon-button" aria-label="Toggle menu">☰</button>
+    <a class="brand" href="/">{{ shop.name | default: 'Amrend Life' }}</a>
+  </div>
+  <div class="header-center">
+    <form action="/search" method="get" class="search-form">
+      <input type="search" name="q" placeholder="Search home & kitchen tools" aria-label="Search">
+      <button type="submit">Search</button>
+    </form>
+  </div>
+  <div class="header-right">
+    <a href="/account" class="icon-button">👤</a>
+    <a href="/cart" class="icon-button">🛒 <span class="cart-count">{{ cart.item_count }}</span></a>
+  </div>
+</div>
+<nav class="mega-nav">
+  <ul>
+    {% for link in linklists.main-menu.links %}
+      <li><a href="{{ link.url }}">{{ link.title }}</a></li>
+    {% endfor %}
+  </ul>
+</nav>
